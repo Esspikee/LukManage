@@ -1,9 +1,11 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   BarChart3,
   CalendarRange,
   CheckCircle2,
+  Circle,
   Download,
   Forward,
   Landmark,
@@ -12,6 +14,7 @@ import {
   ReceiptText,
   Scale,
   Settings,
+  Sparkles,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -64,6 +67,7 @@ type Section = "past" | "current" | "future" | "settings";
 type CurrentSub = "overview" | "transactions";
 type SettingsSub = "savings" | "debts" | "backup" | "health";
 type CsvKind = "transactions" | "savings" | "debts" | "recurring";
+type NavigateFn = (section: Section, sub?: CurrentSub | SettingsSub) => void;
 
 const transactionTypes: TransactionType[] = ["Gasto", "Ingreso", "Ahorro"];
 const chartColors = ["#2563eb", "#16a34a", "#dc2626", "#ca8a04", "#9333ea", "#0891b2"];
@@ -76,6 +80,12 @@ export function App() {
   const [reportMonth, setReportMonth] = useState(todayIso().slice(0, 7));
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("month");
   const [state, setState] = useState<FinanceState>(() => loadFinanceState());
+
+  const navigate: NavigateFn = (section, sub) => {
+    setActiveSection(section);
+    if (section === "current" && sub) setCurrentSub(sub as CurrentSub);
+    if (section === "settings" && sub) setSettingsSub(sub as SettingsSub);
+  };
 
   useEffect(() => {
     saveFinanceState(state);
@@ -504,6 +514,7 @@ export function App() {
                 transactions={state.transactions}
                 totals={totals}
                 healthIssues={healthIssues}
+                onNavigate={navigate}
               />
             )}
             {currentSub === "transactions" && (
@@ -605,6 +616,7 @@ function Dashboard({
   currentMonthReport,
   debts,
   healthIssues,
+  onNavigate,
   savingsAccounts,
   totals,
   transactions,
@@ -612,6 +624,7 @@ function Dashboard({
   currentMonthReport: ReportData;
   debts: Debt[];
   healthIssues: HealthIssue[];
+  onNavigate: NavigateFn;
   savingsAccounts: SavingsAccount[];
   totals: {
     totalSavings: number;
@@ -633,29 +646,43 @@ function Dashboard({
     { name: "Gasto", value: currentMonthReport.totals.expenses },
     { name: "Ahorro", value: currentMonthReport.totals.savings },
   ];
-  const setupItems = [
+  const setupItems: SetupItem[] = [
     {
+      cta: "Add a bank",
       done: savingsAccounts.length > 0,
       label: "Add your savings banks",
+      section: "settings",
+      sub: "savings",
       value: `${savingsAccounts.length} bank${savingsAccounts.length === 1 ? "" : "s"}`,
     },
     {
+      cta: "Add a debt",
       done: debts.length > 0,
       label: "Add debts if you have any",
+      section: "settings",
+      sub: "debts",
       value: `${debts.length} debt${debts.length === 1 ? "" : "s"}`,
     },
     {
+      cta: "Add or import",
       done: transactions.length > 0,
       label: "Add or import transactions",
+      section: "current",
+      sub: "transactions",
       value: `${transactions.length} row${transactions.length === 1 ? "" : "s"}`,
     },
   ];
   const setupComplete = setupItems.every((item) => item.done);
+  const isFirstRun = savingsAccounts.length === 0 && debts.length === 0 && transactions.length === 0;
+
+  if (isFirstRun) {
+    return <Welcome onNavigate={onNavigate} />;
+  }
 
   return (
     <div className="stack">
       <Header title="Dashboard" subtitle="Your current position and this month's movement." />
-      {!setupComplete ? <SetupChecklist items={setupItems} /> : null}
+      {!setupComplete ? <SetupChecklist items={setupItems} onNavigate={onNavigate} /> : null}
       <div className="metric-grid">
         <Metric label="Total saved" value={formatCurrency(totals.totalSavings)} tone="positive" />
         <Metric label="Total debt" value={formatCurrency(totals.totalDebt)} tone="negative" />
@@ -748,7 +775,16 @@ function Dashboard({
   );
 }
 
-function SetupChecklist({ items }: { items: Array<{ done: boolean; label: string; value: string }> }) {
+type SetupItem = {
+  cta: string;
+  done: boolean;
+  label: string;
+  section: Section;
+  sub?: CurrentSub | SettingsSub;
+  value: string;
+};
+
+function SetupChecklist({ items, onNavigate }: { items: SetupItem[]; onNavigate: NavigateFn }) {
   return (
     <section className="setup-panel">
       <div className="panel-title">
@@ -756,15 +792,77 @@ function SetupChecklist({ items }: { items: Array<{ done: boolean; label: string
         <h3>Setup checklist</h3>
       </div>
       <div className="setup-list">
-        {items.map((item) => (
-          <div className={item.done ? "setup-item done" : "setup-item"} key={item.label}>
-            <CheckCircle2 size={18} />
-            <span>{item.label}</span>
-            <strong>{item.value}</strong>
-          </div>
-        ))}
+        {items.map((item) =>
+          item.done ? (
+            <div className="setup-item done" key={item.label}>
+              <CheckCircle2 size={18} />
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+            </div>
+          ) : (
+            <button
+              className="setup-item actionable"
+              key={item.label}
+              onClick={() => onNavigate(item.section, item.sub)}
+              type="button"
+            >
+              <Circle size={18} />
+              <span>{item.label}</span>
+              <strong>
+                {item.cta}
+                <ArrowRight size={14} />
+              </strong>
+            </button>
+          ),
+        )}
       </div>
     </section>
+  );
+}
+
+function Welcome({ onNavigate }: { onNavigate: NavigateFn }) {
+  return (
+    <div className="stack">
+      <section className="welcome-panel">
+        <div className="welcome-badge">
+          <Sparkles size={20} />
+        </div>
+        <h2>Welcome to Money Manager</h2>
+        <p>
+          Track your savings, debts, and monthly cash flow — everything stays local on this device. Start with one of
+          these:
+        </p>
+        <div className="welcome-actions">
+          <button className="welcome-action primary" onClick={() => onNavigate("settings", "backup")} type="button">
+            <Upload size={18} />
+            <span>
+              <strong>Import my data</strong>
+              <small>Bring in a CSV or a JSON backup</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+          <button className="welcome-action" onClick={() => onNavigate("settings", "savings")} type="button">
+            <Landmark size={18} />
+            <span>
+              <strong>Add a savings bank</strong>
+              <small>Record where your money is saved</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+          <button className="welcome-action" onClick={() => onNavigate("current", "transactions")} type="button">
+            <ReceiptText size={18} />
+            <span>
+              <strong>Add a transaction</strong>
+              <small>Log an income, expense, or saving</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+        </div>
+        <p className="welcome-hint">
+          Just exploring? Load sample data from <strong>Settings → Backup</strong> to see the app with numbers in it.
+        </p>
+      </section>
+    </div>
   );
 }
 
