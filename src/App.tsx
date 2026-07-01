@@ -37,9 +37,8 @@ import {
   createRecurringPayment,
   createSavingsAccount,
   createTransaction,
-  loadFinanceState,
-  saveFinanceState,
 } from "./storage";
+import { repository } from "./persistence";
 import type { Debt, FinanceState, RecurringPayment, SavingsAccount, Transaction, TransactionType } from "./types";
 import {
   buildForecast,
@@ -79,7 +78,8 @@ export function App() {
   const [importSummary, setImportSummary] = useState("");
   const [reportMonth, setReportMonth] = useState(todayIso().slice(0, 7));
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("month");
-  const [state, setState] = useState<FinanceState>(() => loadFinanceState());
+  const [state, setState] = useState<FinanceState>(() => createEmptyState());
+  const [loaded, setLoaded] = useState(false);
 
   const navigate: NavigateFn = (section, sub) => {
     setActiveSection(section);
@@ -88,8 +88,26 @@ export function App() {
   };
 
   useEffect(() => {
-    saveFinanceState(state);
-  }, [state]);
+    let cancelled = false;
+    repository
+      .load()
+      .then((persisted) => {
+        if (!cancelled) setState(persisted);
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    // Don't persist until the initial load has populated state, or we'd
+    // overwrite stored data with the empty bootstrap state.
+    if (!loaded) return;
+    void repository.save(state);
+  }, [state, loaded]);
 
   const totals = useMemo(() => {
     const totalSavings = state.savingsAccounts.reduce((sum, account) => sum + account.balance, 0);
@@ -480,6 +498,14 @@ export function App() {
     } finally {
       event.target.value = "";
     }
+  }
+
+  if (!loaded) {
+    return (
+      <main className="app-shell">
+        <div className="app-loading">Loading your data…</div>
+      </main>
+    );
   }
 
   return (
