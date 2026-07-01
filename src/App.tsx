@@ -1,9 +1,11 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   BarChart3,
   CalendarRange,
   CheckCircle2,
+  Circle,
   Download,
   Forward,
   Landmark,
@@ -11,6 +13,8 @@ import {
   Plus,
   ReceiptText,
   Scale,
+  Settings,
+  Sparkles,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -33,66 +37,77 @@ import {
   createRecurringPayment,
   createSavingsAccount,
   createTransaction,
-  loadFinanceState,
-  saveFinanceState,
 } from "./storage";
+import { repository } from "./persistence";
 import type { Debt, FinanceState, RecurringPayment, SavingsAccount, Transaction, TransactionType } from "./types";
+import {
+  buildForecast,
+  buildHealthIssues,
+  buildReport,
+  clampDueDay,
+  coerceFinanceState,
+  createEmptyState,
+  createSampleState,
+  debtKey,
+  importMessage,
+  parseDebtRow,
+  parseRecurringPaymentRow,
+  parseSavingsRow,
+  parseTransactionRow,
+  recurringPaymentKey,
+  reportPeriods,
+  savingsKey,
+  transactionKey,
+  uniqueSorted,
+} from "./finance";
+import type { ForecastData, HealthIssue, ReportData, ReportPeriod } from "./finance";
 
-type Tab = "dashboard" | "savings" | "debts" | "transactions" | "reports" | "future" | "health" | "backup";
-type HealthSeverity = "warning" | "info";
+type Section = "past" | "current" | "future" | "settings";
+type CurrentSub = "overview" | "transactions";
+type SettingsSub = "savings" | "debts" | "backup" | "health";
 type CsvKind = "transactions" | "savings" | "debts" | "recurring";
-type ReportPeriod = "month" | "bimester" | "trimester" | "quarter" | "semester" | "year";
-
-type ReportData = {
-  categoryExpenses: Array<{ name: string; value: number }>;
-  filteredTransactions: Transaction[];
-  label: string;
-  totals: {
-    expenses: number;
-    income: number;
-    netFlow: number;
-    savings: number;
-  };
-};
-
-type ForecastData = {
-  activePayments: RecurringPayment[];
-  debtPayments: number;
-  projectedEndBalance: number;
-  recurringExpenses: number;
-  recurringIncome: number;
-  recurringSavings: number;
-  startingSavings: number;
-};
-
-type HealthIssue = {
-  detail: string;
-  id: string;
-  severity: HealthSeverity;
-  title: string;
-};
+type NavigateFn = (section: Section, sub?: CurrentSub | SettingsSub) => void;
 
 const transactionTypes: TransactionType[] = ["Gasto", "Ingreso", "Ahorro"];
-const reportPeriods: Array<{ label: string; value: ReportPeriod }> = [
-  { label: "Month", value: "month" },
-  { label: "Bimester", value: "bimester" },
-  { label: "Trimester", value: "trimester" },
-  { label: "Quarter", value: "quarter" },
-  { label: "Semester", value: "semester" },
-  { label: "Year", value: "year" },
-];
 const chartColors = ["#2563eb", "#16a34a", "#dc2626", "#ca8a04", "#9333ea", "#0891b2"];
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const [activeSection, setActiveSection] = useState<Section>("current");
+  const [currentSub, setCurrentSub] = useState<CurrentSub>("overview");
+  const [settingsSub, setSettingsSub] = useState<SettingsSub>("savings");
   const [importSummary, setImportSummary] = useState("");
   const [reportMonth, setReportMonth] = useState(todayIso().slice(0, 7));
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("month");
-  const [state, setState] = useState<FinanceState>(() => loadFinanceState());
+  const [state, setState] = useState<FinanceState>(() => createEmptyState());
+  const [loaded, setLoaded] = useState(false);
+
+  const navigate: NavigateFn = (section, sub) => {
+    setActiveSection(section);
+    if (section === "current" && sub) setCurrentSub(sub as CurrentSub);
+    if (section === "settings" && sub) setSettingsSub(sub as SettingsSub);
+  };
 
   useEffect(() => {
-    saveFinanceState(state);
-  }, [state]);
+    let cancelled = false;
+    repository
+      .load()
+      .then((persisted) => {
+        if (!cancelled) setState(persisted);
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    // Don't persist until the initial load has populated state, or we'd
+    // overwrite stored data with the empty bootstrap state.
+    if (!loaded) return;
+    void repository.save(state);
+  }, [state, loaded]);
 
   const totals = useMemo(() => {
     const totalSavings = state.savingsAccounts.reduce((sum, account) => sum + account.balance, 0);
@@ -485,57 +500,62 @@ export function App() {
     }
   }
 
+  if (!loaded) {
+    return (
+      <main className="app-shell">
+        <div className="app-loading">Loading your data…</div>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
-      <aside className="sidebar">
-        <div>
+      <header className="topbar">
+        <div className="brand">
           <p className="eyebrow">Local finance</p>
           <h1>Money Manager</h1>
         </div>
-        <nav className="tabs" aria-label="Primary">
-          <TabButton icon={<LayoutDashboard size={18} />} label="Dashboard" tab="dashboard" active={activeTab} onClick={setActiveTab} />
-          <TabButton icon={<Landmark size={18} />} label="Savings" tab="savings" active={activeTab} onClick={setActiveTab} />
-          <TabButton icon={<Scale size={18} />} label="Debts" tab="debts" active={activeTab} onClick={setActiveTab} />
-          <TabButton icon={<ReceiptText size={18} />} label="Transactions" tab="transactions" active={activeTab} onClick={setActiveTab} />
-          <TabButton icon={<CalendarRange size={18} />} label="Reports" tab="reports" active={activeTab} onClick={setActiveTab} />
-          <TabButton icon={<Forward size={18} />} label="Future" tab="future" active={activeTab} onClick={setActiveTab} />
-          <TabButton icon={<AlertTriangle size={18} />} label="Health" tab="health" active={activeTab} onClick={setActiveTab} />
-          <TabButton icon={<Download size={18} />} label="Backup" tab="backup" active={activeTab} onClick={setActiveTab} />
+        <nav className="tabs primary-tabs" aria-label="Primary">
+          <TabButton icon={<CalendarRange size={18} />} label="Past" tab="past" active={activeSection} onClick={setActiveSection} />
+          <TabButton icon={<LayoutDashboard size={18} />} label="Current Month" tab="current" active={activeSection} onClick={setActiveSection} />
+          <TabButton icon={<Forward size={18} />} label="Future" tab="future" active={activeSection} onClick={setActiveSection} />
         </nav>
-      </aside>
+        <nav className="tabs settings-tab" aria-label="Settings">
+          <TabButton icon={<Settings size={18} />} label="Settings" tab="settings" active={activeSection} onClick={setActiveSection} badge={healthIssues.length} />
+        </nav>
+      </header>
 
       <section className="content">
-        {activeTab === "dashboard" && (
-          <Dashboard
-            savingsAccounts={state.savingsAccounts}
-            debts={state.debts}
-            currentMonthReport={currentMonthReport}
-            transactions={state.transactions}
-            totals={totals}
-            healthIssues={healthIssues}
-          />
+        {activeSection === "current" && (
+          <>
+            <nav className="subnav" aria-label="Current month sections">
+              <TabButton icon={<LayoutDashboard size={16} />} label="Overview" tab="overview" active={currentSub} onClick={setCurrentSub} />
+              <TabButton icon={<ReceiptText size={16} />} label="Transactions" tab="transactions" active={currentSub} onClick={setCurrentSub} />
+            </nav>
+            {currentSub === "overview" && (
+              <Dashboard
+                savingsAccounts={state.savingsAccounts}
+                debts={state.debts}
+                currentMonthReport={currentMonthReport}
+                transactions={state.transactions}
+                totals={totals}
+                healthIssues={healthIssues}
+                onNavigate={navigate}
+              />
+            )}
+            {currentSub === "transactions" && (
+              <TransactionsView
+                transactions={state.transactions}
+                onAdd={addTransaction}
+                onRemove={removeTransaction}
+                onUpdate={updateTransaction}
+                suggestions={suggestions}
+              />
+            )}
+          </>
         )}
-        {activeTab === "savings" && (
-          <SavingsView
-            accounts={state.savingsAccounts}
-            onAdd={addSavingsAccount}
-            onRemove={removeSavingsAccount}
-            onUpdate={updateSavingsAccount}
-          />
-        )}
-        {activeTab === "debts" && (
-          <DebtsView debts={state.debts} onAdd={addDebt} onRemove={removeDebt} onUpdate={updateDebt} />
-        )}
-        {activeTab === "transactions" && (
-          <TransactionsView
-            transactions={state.transactions}
-            onAdd={addTransaction}
-            onRemove={removeTransaction}
-            onUpdate={updateTransaction}
-            suggestions={suggestions}
-          />
-        )}
-        {activeTab === "reports" && (
+
+        {activeSection === "past" && (
           <ReportsView
             month={reportMonth}
             onMonthChange={setReportMonth}
@@ -544,7 +564,8 @@ export function App() {
             report={report}
           />
         )}
-        {activeTab === "future" && (
+
+        {activeSection === "future" && (
           <FutureView
             forecast={forecast}
             onAdd={addRecurringPayment}
@@ -553,475 +574,66 @@ export function App() {
             recurringPayments={state.recurringPayments}
           />
         )}
-        {activeTab === "health" && <HealthView issues={healthIssues} state={state} />}
-        {activeTab === "backup" && (
-          <BackupView
-            onCsvExport={exportCsv}
-            onCsvImport={importCsv}
-            onExport={exportBackup}
-            onImport={importBackup}
-            importSummary={importSummary}
-            onClearData={clearLocalData}
-            onLoadSampleData={loadSampleData}
-            state={state}
-          />
+
+        {activeSection === "settings" && (
+          <>
+            <nav className="subnav" aria-label="Settings sections">
+              <TabButton icon={<Landmark size={16} />} label="Savings" tab="savings" active={settingsSub} onClick={setSettingsSub} />
+              <TabButton icon={<Scale size={16} />} label="Debts" tab="debts" active={settingsSub} onClick={setSettingsSub} />
+              <TabButton icon={<Download size={16} />} label="Backup" tab="backup" active={settingsSub} onClick={setSettingsSub} />
+              <TabButton icon={<AlertTriangle size={16} />} label="Health" tab="health" active={settingsSub} onClick={setSettingsSub} badge={healthIssues.length} />
+            </nav>
+            {settingsSub === "savings" && (
+              <SavingsView
+                accounts={state.savingsAccounts}
+                onAdd={addSavingsAccount}
+                onRemove={removeSavingsAccount}
+                onUpdate={updateSavingsAccount}
+              />
+            )}
+            {settingsSub === "debts" && (
+              <DebtsView debts={state.debts} onAdd={addDebt} onRemove={removeDebt} onUpdate={updateDebt} />
+            )}
+            {settingsSub === "backup" && (
+              <BackupView
+                onCsvExport={exportCsv}
+                onCsvImport={importCsv}
+                onExport={exportBackup}
+                onImport={importBackup}
+                importSummary={importSummary}
+                onClearData={clearLocalData}
+                onLoadSampleData={loadSampleData}
+                state={state}
+              />
+            )}
+            {settingsSub === "health" && <HealthView issues={healthIssues} state={state} />}
+          </>
         )}
       </section>
     </main>
   );
 }
 
-function coerceFinanceState(input: unknown): FinanceState {
-  const candidate =
-    isRecord(input) && isRecord(input.state) ? input.state : isRecord(input) ? input : {};
-
-  return {
-    recurringPayments: Array.isArray(candidate.recurringPayments) ? candidate.recurringPayments : [],
-    savingsAccounts: Array.isArray(candidate.savingsAccounts) ? candidate.savingsAccounts : [],
-    debts: Array.isArray(candidate.debts) ? candidate.debts : [],
-    transactions: Array.isArray(candidate.transactions) ? candidate.transactions : [],
-  };
-}
-
-function createEmptyState(): FinanceState {
-  return {
-    recurringPayments: [],
-    savingsAccounts: [],
-    debts: [],
-    transactions: [],
-  };
-}
-
-function createSampleState(): FinanceState {
-  const month = todayIso().slice(0, 7);
-  const previousMonthDate = new Date();
-  previousMonthDate.setMonth(previousMonthDate.getMonth() - 1);
-  const previousMonth = previousMonthDate.toISOString().slice(0, 7);
-
-  return {
-    savingsAccounts: [
-      createSavingsAccount({ bankName: "Lulo Bank", balance: 2800000 }),
-      createSavingsAccount({ bankName: "Davivienda", balance: 1200000 }),
-    ],
-    debts: [
-      createDebt({
-        name: "Credit card",
-        currentBalance: 950000,
-        monthlyPayment: 300000,
-        dueDate: `${month}-20`,
-        notes: "Sample debt",
-      }),
-    ],
-    recurringPayments: [
-      createRecurringPayment({
-        active: true,
-        amount: 4200000,
-        category: "Salary",
-        dueDay: 30,
-        name: "Salary",
-        type: "Ingreso",
-      }),
-      createRecurringPayment({
-        active: true,
-        amount: 1100000,
-        category: "Rent",
-        dueDay: 1,
-        name: "Rent",
-        type: "Gasto",
-      }),
-      createRecurringPayment({
-        active: true,
-        amount: 500000,
-        category: "Savings",
-        dueDay: 5,
-        name: "Apartment savings",
-        type: "Ahorro",
-      }),
-    ],
-    transactions: [
-      createTransaction({
-        categoria: "Salary",
-        descripcion: "Monthly salary",
-        fecha: `${month}-01`,
-        gastoIngresoAhorro: "Ingreso",
-        monto: 4200000,
-        subcategoria: "Main",
-      }),
-      createTransaction({
-        categoria: "Personal",
-        descripcion: "Groceries",
-        fecha: `${month}-03`,
-        gastoIngresoAhorro: "Gasto",
-        monto: 180000,
-        subcategoria: "Food",
-      }),
-      createTransaction({
-        categoria: "Transport",
-        descripcion: "Gas",
-        fecha: `${month}-06`,
-        gastoIngresoAhorro: "Gasto",
-        monto: 85000,
-        subcategoria: "Moto",
-      }),
-      createTransaction({
-        categoria: "Savings",
-        descripcion: "Apartment fund",
-        fecha: `${month}-07`,
-        gastoIngresoAhorro: "Ahorro",
-        monto: 500000,
-        subcategoria: "Goal",
-      }),
-      createTransaction({
-        categoria: "Personal",
-        descripcion: "Dinner",
-        fecha: `${previousMonth}-22`,
-        gastoIngresoAhorro: "Gasto",
-        monto: 95000,
-        subcategoria: "Food",
-      }),
-    ],
-  };
-}
-
-function uniqueSorted(values: string[]) {
-  return Array.from(new Set(values.map((value) => normalizeLabel(value)).filter(Boolean))).sort((a, b) =>
-    a.localeCompare(b),
-  );
-}
-
-function buildReport(transactions: Transaction[], selectedMonth: string, period: ReportPeriod): ReportData {
-  const [year, month] = selectedMonth.split("-").map(Number);
-  const length = periodMonthLength(period);
-  const startMonth = period === "year" ? 1 : Math.floor(((month || 1) - 1) / length) * length + 1;
-  const endMonth = period === "year" ? 12 : startMonth + length - 1;
-
-  const filteredTransactions = transactions
-    .filter((transaction) => {
-      const parsed = transactionDateParts(transaction.fecha);
-      return Boolean(parsed && parsed.year === year && parsed.month >= startMonth && parsed.month <= endMonth);
-    })
-    .sort((a, b) => a.fecha.localeCompare(b.fecha));
-
-  const totals = filteredTransactions.reduce(
-    (acc, transaction) => {
-      if (transaction.gastoIngresoAhorro === "Ingreso") acc.income += transaction.monto;
-      if (transaction.gastoIngresoAhorro === "Gasto") acc.expenses += transaction.monto;
-      if (transaction.gastoIngresoAhorro === "Ahorro") acc.savings += transaction.monto;
-      acc.netFlow = acc.income - acc.expenses - acc.savings;
-      return acc;
-    },
-    { expenses: 0, income: 0, netFlow: 0, savings: 0 },
-  );
-
-  const expenseByCategory = new Map<string, number>();
-  filteredTransactions
-    .filter((transaction) => transaction.gastoIngresoAhorro === "Gasto")
-    .forEach((transaction) => {
-      const category = normalizeLabel(transaction.categoria) || "Uncategorized";
-      expenseByCategory.set(category, (expenseByCategory.get(category) || 0) + transaction.monto);
-    });
-
-  const categoryExpenses = Array.from(expenseByCategory, ([name, value]) => ({ name, value })).sort(
-    (a, b) => b.value - a.value,
-  );
-
-  return {
-    categoryExpenses,
-    filteredTransactions,
-    label: `${periodLabel(period)} ${year}-${String(startMonth).padStart(2, "0")} to ${year}-${String(endMonth).padStart(2, "0")}`,
-    totals,
-  };
-}
-
-function periodMonthLength(period: ReportPeriod) {
-  if (period === "bimester") return 2;
-  if (period === "trimester" || period === "quarter") return 3;
-  if (period === "semester") return 6;
-  if (period === "year") return 12;
-  return 1;
-}
-
-function periodLabel(period: ReportPeriod) {
-  return reportPeriods.find((item) => item.value === period)?.label || "Period";
-}
-
-function transactionDateParts(value: string) {
-  const text = normalizeLabel(value);
-  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return { year: Number(iso[1]), month: Number(iso[2]), day: Number(iso[3]) };
-
-  const slash = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (slash) return { year: Number(slash[3]), month: Number(slash[2]), day: Number(slash[1]) };
-
-  return null;
-}
-
-function importMessage(label: string, imported: number, duplicates: number, invalid: number) {
-  const parts = [`Imported ${imported} ${label} rows`];
-  if (duplicates) parts.push(`skipped ${duplicates} duplicate${duplicates === 1 ? "" : "s"}`);
-  if (invalid) parts.push(`ignored ${invalid} invalid row${invalid === 1 ? "" : "s"}`);
-  return `${parts.join(", ")}.`;
-}
-
-function transactionKey(transaction: Transaction) {
-  return [
-    transaction.fecha,
-    transaction.gastoIngresoAhorro,
-    normalizeLabel(transaction.categoria).toLowerCase(),
-    normalizeLabel(transaction.subcategoria).toLowerCase(),
-    normalizeLabel(transaction.descripcion).toLowerCase(),
-    transaction.monto,
-  ].join("|");
-}
-
-function savingsKey(account: SavingsAccount) {
-  return normalizeLabel(account.bankName).toLowerCase();
-}
-
-function debtKey(debt: Debt) {
-  return normalizeLabel(debt.name).toLowerCase();
-}
-
-function recurringPaymentKey(payment: RecurringPayment) {
-  return normalizeLabel(payment.name).toLowerCase();
-}
-
-function buildForecast(state: FinanceState): ForecastData {
-  const startingSavings = state.savingsAccounts.reduce((sum, account) => sum + account.balance, 0);
-  const activePayments = state.recurringPayments.filter((payment) => payment.active);
-  const recurringIncome = activePayments
-    .filter((payment) => payment.type === "Ingreso")
-    .reduce((sum, payment) => sum + payment.amount, 0);
-  const recurringExpenses = activePayments
-    .filter((payment) => payment.type === "Gasto")
-    .reduce((sum, payment) => sum + payment.amount, 0);
-  const recurringSavings = activePayments
-    .filter((payment) => payment.type === "Ahorro")
-    .reduce((sum, payment) => sum + payment.amount, 0);
-  const debtPayments = state.debts.reduce((sum, debt) => sum + debt.monthlyPayment, 0);
-
-  return {
-    activePayments,
-    debtPayments,
-    projectedEndBalance: startingSavings + recurringIncome - recurringExpenses - recurringSavings - debtPayments,
-    recurringExpenses,
-    recurringIncome,
-    recurringSavings,
-    startingSavings,
-  };
-}
-
-function buildHealthIssues(state: FinanceState): HealthIssue[] {
-  const issues: HealthIssue[] = [];
-
-  state.transactions.forEach((transaction) => {
-    const label = `${transaction.fecha || "No date"} - ${transaction.descripcion || "No description"}`;
-    if (!transactionDateParts(transaction.fecha)) {
-      issues.push({
-        detail: label,
-        id: `transaction-date-${transaction.id}`,
-        severity: "warning",
-        title: "Transaction has an invalid date",
-      });
-    }
-    if (!normalizeLabel(transaction.categoria)) {
-      issues.push({
-        detail: label,
-        id: `transaction-category-${transaction.id}`,
-        severity: "warning",
-        title: "Transaction has no category",
-      });
-    }
-    if (!normalizeLabel(transaction.descripcion)) {
-      issues.push({
-        detail: label,
-        id: `transaction-description-${transaction.id}`,
-        severity: "warning",
-        title: "Transaction has no description",
-      });
-    }
-    if (transaction.monto <= 0) {
-      issues.push({
-        detail: label,
-        id: `transaction-amount-${transaction.id}`,
-        severity: "warning",
-        title: "Transaction amount is zero or negative",
-      });
-    }
-  });
-
-  state.savingsAccounts.forEach((account) => {
-    if (!normalizeLabel(account.bankName)) {
-      issues.push({
-        detail: `Balance: ${formatCurrency(account.balance)}`,
-        id: `saving-name-${account.id}`,
-        severity: "warning",
-        title: "Savings account has no bank name",
-      });
-    }
-    if (account.balance < 0) {
-      issues.push({
-        detail: normalizeLabel(account.bankName) || "Unnamed savings account",
-        id: `saving-balance-${account.id}`,
-        severity: "warning",
-        title: "Savings balance is negative",
-      });
-    }
-  });
-
-  state.debts.forEach((debt) => {
-    if (!normalizeLabel(debt.name)) {
-      issues.push({
-        detail: `Debt balance: ${formatCurrency(debt.currentBalance)}`,
-        id: `debt-name-${debt.id}`,
-        severity: "warning",
-        title: "Debt has no name",
-      });
-    }
-    if (debt.currentBalance > 0 && debt.monthlyPayment <= 0) {
-      issues.push({
-        detail: normalizeLabel(debt.name) || "Unnamed debt",
-        id: `debt-payment-${debt.id}`,
-        severity: "warning",
-        title: "Debt has no monthly payment",
-      });
-    }
-  });
-
-  state.recurringPayments.forEach((payment) => {
-    if (!payment.active) {
-      issues.push({
-        detail: normalizeLabel(payment.name) || "Unnamed recurring payment",
-        id: `recurring-inactive-${payment.id}`,
-        severity: "info",
-        title: "Recurring item is inactive",
-      });
-    }
-    if (payment.active && payment.amount <= 0) {
-      issues.push({
-        detail: normalizeLabel(payment.name) || "Unnamed recurring payment",
-        id: `recurring-amount-${payment.id}`,
-        severity: "warning",
-        title: "Active recurring item has zero amount",
-      });
-    }
-    if (!normalizeLabel(payment.category)) {
-      issues.push({
-        detail: normalizeLabel(payment.name) || "Unnamed recurring payment",
-        id: `recurring-category-${payment.id}`,
-        severity: "warning",
-        title: "Recurring item has no category",
-      });
-    }
-  });
-
-  return issues;
-}
-
-function clampDueDay(value: number) {
-  if (!Number.isFinite(value)) return 1;
-  return Math.min(31, Math.max(1, Math.round(value)));
-}
-
-function parseTransactionRow(header: string[], row: string[]): Transaction | null {
-  const fecha = csvValue(header, row, ["fecha", "date"]);
-  const tipo = normalizeTransactionType(csvValue(header, row, ["gasto/ingreso/ahorro", "tipo", "type"]));
-  const categoria = normalizeLabel(csvValue(header, row, ["categoria", "category"]));
-  const subcategoria = normalizeLabel(csvValue(header, row, ["subcategoria", "subcategory"]));
-  const descripcion = normalizeLabel(csvValue(header, row, ["descripcion", "description"]));
-  const monto = toNumber(csvValue(header, row, ["monto", "amount"]));
-
-  if (!fecha || !tipo || !categoria || !descripcion || !Number.isFinite(monto)) return null;
-
-  return createTransaction({
-    fecha,
-    gastoIngresoAhorro: tipo,
-    categoria,
-    subcategoria,
-    descripcion,
-    monto,
-  });
-}
-
-function parseSavingsRow(header: string[], row: string[]): SavingsAccount | null {
-  const bankName = normalizeLabel(csvValue(header, row, ["bank_name", "bank", "banco", "bankname"]));
-  const balance = toNumber(csvValue(header, row, ["balance", "saldo"]));
-
-  if (!bankName || !Number.isFinite(balance)) return null;
-
-  return createSavingsAccount({ bankName, balance });
-}
-
-function parseDebtRow(header: string[], row: string[]): Debt | null {
-  const name = normalizeLabel(csvValue(header, row, ["name", "debt", "debt_name", "categoria", "nombre"]));
-  const currentBalance = toNumber(csvValue(header, row, ["current_balance", "balance", "valor", "monto"]));
-  const monthlyPayment = toNumber(csvValue(header, row, ["monthly_payment", "payment", "monthly", "pago_mensual"]));
-  const dueDate = csvValue(header, row, ["due_date", "due", "fecha"]);
-  const notes = normalizeLabel(csvValue(header, row, ["notes", "note", "notas"]));
-
-  if (!name || !Number.isFinite(currentBalance)) return null;
-
-  return createDebt({ name, currentBalance, monthlyPayment, dueDate, notes });
-}
-
-function parseRecurringPaymentRow(header: string[], row: string[]): RecurringPayment | null {
-  const name = normalizeLabel(csvValue(header, row, ["name", "nombre"]));
-  const type = normalizeTransactionType(csvValue(header, row, ["type", "tipo", "gasto/ingreso/ahorro"]));
-  const category = normalizeLabel(csvValue(header, row, ["category", "categoria"]));
-  const amount = toNumber(csvValue(header, row, ["amount", "monto"]));
-  const dueDay = clampDueDay(toNumber(csvValue(header, row, ["due_day", "due", "day", "dia"])));
-  const active = normalizeBoolean(csvValue(header, row, ["active", "activo"]));
-
-  if (!name || !type || !category || !Number.isFinite(amount)) return null;
-
-  return createRecurringPayment({ name, type, category, amount, dueDay, active });
-}
-
-function csvValue(header: string[], row: string[], aliases: string[]) {
-  const normalizedHeader = header.map((value) => normalizeCsvHeader(value));
-  const index = aliases.map((alias) => normalizedHeader.indexOf(normalizeCsvHeader(alias))).find((item) => item >= 0);
-  return index === undefined ? "" : row[index] ?? "";
-}
-
-function normalizeCsvHeader(value: string) {
-  return normalizeLabel(value).toLowerCase().replace(/\s+/g, "_");
-}
-
-function normalizeTransactionType(value: string): TransactionType | null {
-  const normalized = normalizeLabel(value).toLowerCase();
-  if (normalized === "gasto") return "Gasto";
-  if (normalized === "ingreso") return "Ingreso";
-  if (normalized === "ahorro") return "Ahorro";
-  return null;
-}
-
-function normalizeBoolean(value: string) {
-  const normalized = normalizeLabel(value).toLowerCase();
-  if (["false", "0", "no", "inactive", "inactivo"].includes(normalized)) return false;
-  return true;
-}
-
-function isRecord(input: unknown): input is Record<string, unknown> {
-  return typeof input === "object" && input !== null;
-}
-
-function TabButton({
+function TabButton<T extends string>({
   active,
+  badge,
   icon,
   label,
   onClick,
   tab,
 }: {
-  active: Tab;
+  active: T;
+  badge?: number;
   icon: React.ReactNode;
   label: string;
-  onClick: (tab: Tab) => void;
-  tab: Tab;
+  onClick: (tab: T) => void;
+  tab: T;
 }) {
   return (
     <button className={active === tab ? "tab active" : "tab"} onClick={() => onClick(tab)} type="button">
       {icon}
       <span>{label}</span>
+      {badge ? <span className="tab-badge">{badge}</span> : null}
     </button>
   );
 }
@@ -1030,6 +642,7 @@ function Dashboard({
   currentMonthReport,
   debts,
   healthIssues,
+  onNavigate,
   savingsAccounts,
   totals,
   transactions,
@@ -1037,6 +650,7 @@ function Dashboard({
   currentMonthReport: ReportData;
   debts: Debt[];
   healthIssues: HealthIssue[];
+  onNavigate: NavigateFn;
   savingsAccounts: SavingsAccount[];
   totals: {
     totalSavings: number;
@@ -1058,29 +672,43 @@ function Dashboard({
     { name: "Gasto", value: currentMonthReport.totals.expenses },
     { name: "Ahorro", value: currentMonthReport.totals.savings },
   ];
-  const setupItems = [
+  const setupItems: SetupItem[] = [
     {
+      cta: "Add a bank",
       done: savingsAccounts.length > 0,
       label: "Add your savings banks",
+      section: "settings",
+      sub: "savings",
       value: `${savingsAccounts.length} bank${savingsAccounts.length === 1 ? "" : "s"}`,
     },
     {
+      cta: "Add a debt",
       done: debts.length > 0,
       label: "Add debts if you have any",
+      section: "settings",
+      sub: "debts",
       value: `${debts.length} debt${debts.length === 1 ? "" : "s"}`,
     },
     {
+      cta: "Add or import",
       done: transactions.length > 0,
       label: "Add or import transactions",
+      section: "current",
+      sub: "transactions",
       value: `${transactions.length} row${transactions.length === 1 ? "" : "s"}`,
     },
   ];
   const setupComplete = setupItems.every((item) => item.done);
+  const isFirstRun = savingsAccounts.length === 0 && debts.length === 0 && transactions.length === 0;
+
+  if (isFirstRun) {
+    return <Welcome onNavigate={onNavigate} />;
+  }
 
   return (
     <div className="stack">
       <Header title="Dashboard" subtitle="Your current position and this month's movement." />
-      {!setupComplete ? <SetupChecklist items={setupItems} /> : null}
+      {!setupComplete ? <SetupChecklist items={setupItems} onNavigate={onNavigate} /> : null}
       <div className="metric-grid">
         <Metric label="Total saved" value={formatCurrency(totals.totalSavings)} tone="positive" />
         <Metric label="Total debt" value={formatCurrency(totals.totalDebt)} tone="negative" />
@@ -1173,7 +801,16 @@ function Dashboard({
   );
 }
 
-function SetupChecklist({ items }: { items: Array<{ done: boolean; label: string; value: string }> }) {
+type SetupItem = {
+  cta: string;
+  done: boolean;
+  label: string;
+  section: Section;
+  sub?: CurrentSub | SettingsSub;
+  value: string;
+};
+
+function SetupChecklist({ items, onNavigate }: { items: SetupItem[]; onNavigate: NavigateFn }) {
   return (
     <section className="setup-panel">
       <div className="panel-title">
@@ -1181,15 +818,77 @@ function SetupChecklist({ items }: { items: Array<{ done: boolean; label: string
         <h3>Setup checklist</h3>
       </div>
       <div className="setup-list">
-        {items.map((item) => (
-          <div className={item.done ? "setup-item done" : "setup-item"} key={item.label}>
-            <CheckCircle2 size={18} />
-            <span>{item.label}</span>
-            <strong>{item.value}</strong>
-          </div>
-        ))}
+        {items.map((item) =>
+          item.done ? (
+            <div className="setup-item done" key={item.label}>
+              <CheckCircle2 size={18} />
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+            </div>
+          ) : (
+            <button
+              className="setup-item actionable"
+              key={item.label}
+              onClick={() => onNavigate(item.section, item.sub)}
+              type="button"
+            >
+              <Circle size={18} />
+              <span>{item.label}</span>
+              <strong>
+                {item.cta}
+                <ArrowRight size={14} />
+              </strong>
+            </button>
+          ),
+        )}
       </div>
     </section>
+  );
+}
+
+function Welcome({ onNavigate }: { onNavigate: NavigateFn }) {
+  return (
+    <div className="stack">
+      <section className="welcome-panel">
+        <div className="welcome-badge">
+          <Sparkles size={20} />
+        </div>
+        <h2>Welcome to Money Manager</h2>
+        <p>
+          Track your savings, debts, and monthly cash flow — everything stays local on this device. Start with one of
+          these:
+        </p>
+        <div className="welcome-actions">
+          <button className="welcome-action primary" onClick={() => onNavigate("settings", "backup")} type="button">
+            <Upload size={18} />
+            <span>
+              <strong>Import my data</strong>
+              <small>Bring in a CSV or a JSON backup</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+          <button className="welcome-action" onClick={() => onNavigate("settings", "savings")} type="button">
+            <Landmark size={18} />
+            <span>
+              <strong>Add a savings bank</strong>
+              <small>Record where your money is saved</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+          <button className="welcome-action" onClick={() => onNavigate("current", "transactions")} type="button">
+            <ReceiptText size={18} />
+            <span>
+              <strong>Add a transaction</strong>
+              <small>Log an income, expense, or saving</small>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+        </div>
+        <p className="welcome-hint">
+          Just exploring? Load sample data from <strong>Settings → Backup</strong> to see the app with numbers in it.
+        </p>
+      </section>
+    </div>
   );
 }
 
