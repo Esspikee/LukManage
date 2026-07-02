@@ -24,6 +24,19 @@ export type ReportData = {
   };
 };
 
+export type ReportComparison = {
+  averageMonthlyExpenses: number;
+  debtPayments: number;
+  expenseChange: number;
+  incomeChange: number;
+  netFlowChange: number;
+  previousLabel: string;
+  savingsChange: number;
+  savingsRate: number;
+  topExpenseCategory?: { name: string; value: number };
+  transactionCount: number;
+};
+
 export type ForecastData = {
   activePayments: RecurringPayment[];
   debtPayments: number;
@@ -63,6 +76,38 @@ export type BudgetProgress = {
   status: "under" | "near" | "over";
 };
 
+export type CategoryUsage = {
+  budgetCount: number;
+  creditCardCount: number;
+  key: string;
+  lastDate: string;
+  managed: boolean;
+  name: string;
+  recurringCount: number;
+  suggestedType: TransactionType;
+  totalAmount: number;
+  transactionCount: number;
+};
+
+export type DebtOverview = {
+  creditCardCount: number;
+  creditCardTotal: number;
+  estimatedPayoffMonths: number | null;
+  monthlyDebtPayments: number;
+  regularDebtCount: number;
+  regularDebtTotal: number;
+  totalDebt: number;
+};
+
+export type CreditCardActivity = {
+  balance: number;
+  charged: number;
+  chargeCount: number;
+  lastChargeDate: string;
+  paid: number;
+  statement: CreditCardStatement;
+};
+
 export type TransactionFilters = {
   category?: string;
   search?: string;
@@ -76,6 +121,17 @@ export type TransactionTotals = {
   income: number;
   netFlow: number;
   savings: number;
+};
+
+export type TransactionQuickPick = {
+  amount: number;
+  category: string;
+  count: number;
+  description: string;
+  id: string;
+  lastDate: string;
+  subcategory: string;
+  type: TransactionType;
 };
 
 export type HealthIssue = {
@@ -274,6 +330,38 @@ export function sortTransactions(transactions: Transaction[], sort: TransactionS
   });
 }
 
+export function buildTransactionQuickPicks(transactions: Transaction[], limit = 6): TransactionQuickPick[] {
+  const picks = new Map<string, TransactionQuickPick>();
+
+  sortTransactions(transactions, "date-desc").forEach((transaction) => {
+    const category = normalizeLabel(transaction.categoria);
+    const description = normalizeLabel(transaction.descripcion);
+    if (!category || !description || transaction.monto <= 0) return;
+
+    const type = transaction.gastoIngresoAhorro;
+    const subcategory = normalizeLabel(transaction.subcategoria);
+    const key = [type, category, subcategory, description].map((value) => value.toLowerCase()).join("|");
+    const existing = picks.get(key);
+    if (existing) {
+      existing.count += 1;
+      return;
+    }
+
+    picks.set(key, {
+      amount: transaction.monto,
+      category,
+      count: 1,
+      description,
+      id: key,
+      lastDate: transaction.fecha,
+      subcategory,
+      type,
+    });
+  });
+
+  return Array.from(picks.values()).slice(0, limit);
+}
+
 function comparableTransactionDate(value: string) {
   const parsed = transactionDateParts(value);
   if (!parsed) return normalizeLabel(value);
@@ -324,6 +412,33 @@ export function buildReport(
     label: `${periodLabel(period)} ${year}-${String(startMonth).padStart(2, "0")} to ${year}-${String(endMonth).padStart(2, "0")}`,
     monthlyTrend,
     totals,
+  };
+}
+
+export function previousReportMonth(selectedMonth: string, period: ReportPeriod) {
+  return addMonths(selectedMonth, -periodMonthLength(period));
+}
+
+export function buildReportComparison(current: ReportData, previous: ReportData, monthCount: number): ReportComparison {
+  const debtPayments = current.filteredTransactions
+    .filter((transaction) => normalizeLabel(transaction.categoria).toLowerCase() === "debt payment")
+    .reduce((sum, transaction) => sum + transaction.monto, 0);
+  const topExpenseCategory = current.categoryExpenses[0]
+    ? { name: current.categoryExpenses[0].name, value: current.categoryExpenses[0].value }
+    : undefined;
+  const savingsRate = current.totals.income > 0 ? Math.round((current.totals.savings / current.totals.income) * 100) : 0;
+
+  return {
+    averageMonthlyExpenses: monthCount > 0 ? Math.round(current.totals.expenses / monthCount) : current.totals.expenses,
+    debtPayments,
+    expenseChange: current.totals.expenses - previous.totals.expenses,
+    incomeChange: current.totals.income - previous.totals.income,
+    netFlowChange: current.totals.netFlow - previous.totals.netFlow,
+    previousLabel: previous.label,
+    savingsChange: current.totals.savings - previous.totals.savings,
+    savingsRate,
+    topExpenseCategory,
+    transactionCount: current.filteredTransactions.length,
   };
 }
 
@@ -422,6 +537,79 @@ export function budgetKey(budget: Budget) {
 
 export function categoryKey(category: Category) {
   return normalizeLabel(category.name).toLowerCase();
+}
+
+export function buildCategoryUsage(state: FinanceState): CategoryUsage[] {
+  const managedKeys = new Set(state.categories.map(categoryKey).filter(Boolean));
+  const usage = new Map<string, CategoryUsage & { typeCounts: Record<TransactionType, number> }>();
+
+  const ensureUsage = (name: string, suggestedType: TransactionType) => {
+    const normalized = normalizeLabel(name);
+    const key = normalized.toLowerCase();
+    if (!key) return null;
+
+    const existing = usage.get(key);
+    if (existing) return existing;
+
+    const next = {
+      budgetCount: 0,
+      creditCardCount: 0,
+      key,
+      lastDate: "",
+      managed: managedKeys.has(key),
+      name: normalized,
+      recurringCount: 0,
+      suggestedType,
+      totalAmount: 0,
+      transactionCount: 0,
+      typeCounts: { Ahorro: 0, Gasto: 0, Ingreso: 0 },
+    };
+    usage.set(key, next);
+    return next;
+  };
+
+  state.transactions.forEach((transaction) => {
+    const item = ensureUsage(transaction.categoria, transaction.gastoIngresoAhorro);
+    if (!item) return;
+    item.transactionCount += 1;
+    item.totalAmount += transaction.monto;
+    item.typeCounts[transaction.gastoIngresoAhorro] += 1;
+    if (comparableTransactionDate(transaction.fecha) > comparableTransactionDate(item.lastDate)) item.lastDate = transaction.fecha;
+  });
+
+  state.budgets.forEach((budget) => {
+    const item = ensureUsage(budget.category, "Gasto");
+    if (item) item.budgetCount += 1;
+  });
+
+  state.recurringPayments.forEach((payment) => {
+    const item = ensureUsage(payment.category, payment.type);
+    if (!item) return;
+    item.recurringCount += 1;
+    item.typeCounts[payment.type] += 1;
+  });
+
+  state.debts.forEach((debt) => {
+    if (!isCreditCard(debt)) return;
+    const item = ensureUsage(debt.linkedCategory || "", "Gasto");
+    if (item) item.creditCardCount += 1;
+  });
+
+  return Array.from(usage.values())
+    .map(({ typeCounts, ...item }) => {
+      const [type, count] = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0] || [];
+      return {
+        ...item,
+        suggestedType: count ? (type as TransactionType) : item.suggestedType,
+      };
+    })
+    .sort((a, b) => {
+      if (a.managed !== b.managed) return a.managed ? 1 : -1;
+      const activityA = a.transactionCount + a.budgetCount + a.recurringCount + a.creditCardCount;
+      const activityB = b.transactionCount + b.budgetCount + b.recurringCount + b.creditCardCount;
+      if (activityA !== activityB) return activityB - activityA;
+      return a.name.localeCompare(b.name);
+    });
 }
 
 export function buildForecast(state: FinanceState, startMonth = todayIso().slice(0, 7), monthCount = 6): ForecastData {
@@ -680,43 +868,26 @@ export function buildHealthIssues(state: FinanceState): HealthIssue[] {
     seenCategories.set(key, category.id);
   });
 
-  const managedCategoryKeys = new Set(state.categories.map(categoryKey).filter(Boolean));
-  if (managedCategoryKeys.size) {
-    state.transactions.forEach((transaction) => {
-      const key = normalizeLabel(transaction.categoria).toLowerCase();
-      if (key && !managedCategoryKeys.has(key)) {
-        issues.push({
-          detail: transaction.categoria,
-          id: `transaction-unmanaged-category-${transaction.id}`,
-          severity: "info",
-          title: "Transaction category is not managed",
-        });
-      }
-    });
+  if (state.categories.some((category) => categoryKey(category))) {
+    buildCategoryUsage(state)
+      .filter((category) => !category.managed)
+      .forEach((category) => {
+        const usedIn = [
+          category.transactionCount ? `${category.transactionCount} transaction${category.transactionCount === 1 ? "" : "s"}` : "",
+          category.budgetCount ? `${category.budgetCount} budget${category.budgetCount === 1 ? "" : "s"}` : "",
+          category.recurringCount ? `${category.recurringCount} recurring` : "",
+          category.creditCardCount ? `${category.creditCardCount} credit card${category.creditCardCount === 1 ? "" : "s"}` : "",
+        ]
+          .filter(Boolean)
+          .join(", ");
 
-    state.budgets.forEach((budget) => {
-      const key = normalizeLabel(budget.category).toLowerCase();
-      if (key && !managedCategoryKeys.has(key)) {
         issues.push({
-          detail: budget.category,
-          id: `budget-unmanaged-category-${budget.id}`,
+          detail: `${category.name} is used in ${usedIn}. Add it to Categories or rename the records using it.`,
+          id: `category-unmanaged-${category.key}`,
           severity: "info",
-          title: "Budget category is not managed",
+          title: "Category is used but not managed",
         });
-      }
-    });
-
-    state.recurringPayments.forEach((payment) => {
-      const key = normalizeLabel(payment.category).toLowerCase();
-      if (key && !managedCategoryKeys.has(key)) {
-        issues.push({
-          detail: payment.category,
-          id: `recurring-unmanaged-category-${payment.id}`,
-          severity: "info",
-          title: "Recurring category is not managed",
-        });
-      }
-    });
+      });
   }
 
   state.savingsAccounts.forEach((account) => {
@@ -819,6 +990,35 @@ export function applyDebtPayment(debt: Debt): Debt {
   return { ...debt, currentBalance: Math.max(0, debt.currentBalance - paymentAmount) };
 }
 
+export function debtPayoffMonths(debt: Debt) {
+  if (debt.currentBalance <= 0) return 0;
+  if (debt.monthlyPayment <= 0) return null;
+  return Math.ceil(debt.currentBalance / debt.monthlyPayment);
+}
+
+export function buildDebtOverview(debts: Debt[], transactions: Transaction[]): DebtOverview {
+  const regularDebts = debts.filter((debt) => !isCreditCard(debt));
+  const creditCards = debts.filter((debt) => isCreditCard(debt));
+  const regularDebtTotal = regularDebts.reduce((sum, debt) => sum + Math.max(0, debt.currentBalance), 0);
+  const creditCardTotal = creditCards.reduce((sum, debt) => sum + creditCardBalance(debt, transactions), 0);
+  const monthlyDebtPayments = regularDebts.reduce((sum, debt) => sum + Math.max(0, Math.min(debt.monthlyPayment, debt.currentBalance)), 0);
+  const payableDebts = regularDebts.filter((debt) => debt.currentBalance > 0);
+  const estimatedPayoffMonths =
+    payableDebts.length && payableDebts.every((debt) => debt.monthlyPayment > 0)
+      ? Math.max(...payableDebts.map((debt) => debtPayoffMonths(debt) || 0))
+      : null;
+
+  return {
+    creditCardCount: creditCards.length,
+    creditCardTotal,
+    estimatedPayoffMonths,
+    monthlyDebtPayments,
+    regularDebtCount: regularDebts.length,
+    regularDebtTotal,
+    totalDebt: regularDebtTotal + creditCardTotal,
+  };
+}
+
 // ---- Credit-card mode --------------------------------------------------------
 // A credit-card debt tracks a floating balance: linked-category expenses accrue
 // onto it and payments pay it down. The balance is DERIVED from transactions +
@@ -877,6 +1077,21 @@ export function creditCardStatement(debt: Debt, transactions: Transaction[], tod
 }
 
 /** Records a card payment (pure). Does not create an expense — it clears liability. */
+export function buildCreditCardActivity(debt: Debt, transactions: Transaction[], today = todayIso()): CreditCardActivity {
+  const charges = creditCardCharges(debt, transactions);
+  const charged = charges.reduce((sum, transaction) => sum + transaction.monto, 0);
+  const sortedCharges = sortTransactions(charges, "date-desc");
+
+  return {
+    balance: creditCardBalance(debt, transactions),
+    charged,
+    chargeCount: charges.length,
+    lastChargeDate: sortedCharges[0]?.fecha || "",
+    paid: sumCardPayments(debt),
+    statement: creditCardStatement(debt, transactions, today),
+  };
+}
+
 export function applyCreditCardPayment(
   debt: Debt,
   amount: number,

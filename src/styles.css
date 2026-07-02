@@ -103,6 +103,7 @@ select {
 .file-button,
 .post-button,
 .icon-button,
+.quick-pick,
 .welcome-action,
 .setup-item.actionable {
   position: relative;
@@ -254,6 +255,40 @@ select {
   gap: 16px;
 }
 
+.backup-confidence {
+  display: grid;
+  gap: 14px;
+}
+
+.backup-confidence .panel-title {
+  margin-bottom: 0;
+}
+
+.backup-checklist {
+  display: grid;
+  gap: 8px;
+}
+
+.backup-checklist span {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.backup-checklist span.complete {
+  border-color: rgb(87 185 129 / 0.45);
+  color: var(--positive);
+}
+
+.backup-checklist span.attention {
+  border-color: rgb(226 109 99 / 0.45);
+  color: var(--negative);
+}
+
 /* ---- Surfaces ------------------------------------------------------------- */
 
 .metric,
@@ -292,6 +327,47 @@ select {
   align-items: center;
   color: var(--muted);
   font-weight: 600;
+}
+
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.report-review {
+  display: grid;
+  gap: 14px;
+}
+
+.report-insight {
+  display: grid;
+  gap: 5px;
+  min-height: 74px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-2);
+}
+
+.report-insight span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.report-insight strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.report-insight.positive strong {
+  color: var(--positive);
+}
+
+.report-insight.negative strong {
+  color: var(--negative);
 }
 
 .filter-count {
@@ -371,6 +447,74 @@ select {
   margin: 0;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.compact-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.category-cleanup {
+  display: grid;
+  gap: 14px;
+}
+
+.category-cleanup .panel-title {
+  margin-bottom: 0;
+}
+
+.category-usage-list {
+  display: grid;
+  gap: 10px;
+}
+
+.category-usage-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-2);
+}
+
+.category-usage-item div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.category-usage-item strong,
+.category-usage-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-usage-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.category-usage-item em {
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  background: var(--accent-weak);
+}
+
+.panel-copy + .health-list {
+  margin-top: 12px;
 }
 
 /* ---- Setup checklist ------------------------------------------------------ */
@@ -565,6 +709,15 @@ select {
   accent-color: var(--accent);
 }
 
+.debt-clarity {
+  display: grid;
+  gap: 14px;
+}
+
+.debt-clarity .panel-title {
+  margin-bottom: 0;
+}
+
 .credit-card-panel {
   display: grid;
   gap: 16px;
@@ -579,6 +732,22 @@ select {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.card-activity-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.card-activity-line span {
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--surface-2);
 }
 
 .credit-card-actions {
@@ -624,6 +793,77 @@ select:focus {
 
 .wide {
   grid-column: span 2;
+}
+
+.transaction-keep {
+  align-self: center;
+}
+
+.quick-entry {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.quick-pick-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.quick-pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 70px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  color: var(--text);
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.quick-pick:hover {
+  border-color: var(--accent-line);
+  background: var(--elevated);
+}
+
+.quick-pick span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.quick-pick strong,
+.quick-pick small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-pick strong {
+  font-size: 14px;
+}
+
+.quick-pick small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quick-pick-meta {
+  justify-items: end;
+  flex: 0 0 auto;
+}
+
+.quick-pick-meta em {
+  color: var(--accent);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 800;
 }
 
 /* ---- Buttons -------------------------------------------------------------- */
@@ -844,8 +1084,22 @@ select:focus {
 
 /* ---- Tables --------------------------------------------------------------- */
 
+.table-shell {
+  display: grid;
+  gap: 6px;
+}
+
+.table-scroll-hint {
+  display: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .table-wrap {
   overflow: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
@@ -1054,8 +1308,11 @@ tr:last-child td {
   }
 
   .metric-grid,
+  .compact-metrics,
   .chart-grid,
   .backup-grid,
+  .quick-pick-list,
+  .insight-grid,
   .report-controls,
   .filter-controls,
   .setup-list,
@@ -1131,6 +1388,15 @@ tr:last-child td {
     grid-template-columns: auto 1fr;
   }
 
+  .category-usage-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .category-usage-item .compact-action {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .health-item .compact-action {
     grid-column: 2;
     width: fit-content;
@@ -1138,6 +1404,7 @@ tr:last-child td {
 
   .welcome-panel,
   .panel,
+  .quick-entry,
   .entry-form,
   .report-controls,
   .filter-controls {
@@ -1152,5 +1419,55 @@ tr:last-child td {
   .button-row > *,
   .file-button {
     width: 100%;
+  }
+
+  input,
+  select,
+  .primary-button,
+  .secondary-button,
+  .danger-button,
+  .file-button {
+    min-height: 46px;
+  }
+
+  .table-scroll-hint {
+    display: block;
+  }
+
+  .table-wrap {
+    margin: 0 -16px;
+    padding: 0 16px 8px;
+  }
+
+  table {
+    min-width: 720px;
+  }
+
+  th:first-child,
+  td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--surface);
+  }
+
+  td:first-child {
+    box-shadow: 8px 0 14px rgb(0 0 0 / 0.18);
+  }
+
+  .topbar {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .topbar::-webkit-scrollbar,
+  .table-wrap::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .topbar::-webkit-scrollbar-thumb,
+  .table-wrap::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--line-2);
   }
 }

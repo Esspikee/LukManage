@@ -3,6 +3,9 @@ import {
   applyCreditCardPayment,
   applyDebtPayment,
   buildBudgetProgress,
+  buildCategoryUsage,
+  buildCreditCardActivity,
+  buildDebtOverview,
   creditCardBalance,
   creditCardCharges,
   creditCardStatement,
@@ -11,12 +14,15 @@ import {
   buildForecast,
   buildHealthIssues,
   buildReport,
+  buildReportComparison,
   buildTransactionTotals,
+  buildTransactionQuickPicks,
   buildUpcomingPayments,
   categoryKey,
   clampDueDay,
   coerceFinanceState,
   debtKey,
+  debtPayoffMonths,
   filterTransactions,
   normalizeBoolean,
   normalizeColor,
@@ -27,6 +33,7 @@ import {
   parseTransactionRow,
   periodLabel,
   periodMonthLength,
+  previousReportMonth,
   savingsKey,
   sortTransactions,
   transactionDateParts,
@@ -133,6 +140,32 @@ describe("buildReport", () => {
   });
 });
 
+describe("buildReportComparison", () => {
+  it("compares the selected period with the previous same-length period", () => {
+    const transactions = [
+      tx({ id: "jan-income", fecha: "2026-01-01", gastoIngresoAhorro: "Ingreso", categoria: "Salary", monto: 4000 }),
+      tx({ id: "jan-food", fecha: "2026-01-02", gastoIngresoAhorro: "Gasto", categoria: "Food", monto: 1000 }),
+      tx({ id: "feb-income", fecha: "2026-02-01", gastoIngresoAhorro: "Ingreso", categoria: "Salary", monto: 5000 }),
+      tx({ id: "feb-food", fecha: "2026-02-02", gastoIngresoAhorro: "Gasto", categoria: "Food", monto: 1500 }),
+      tx({ id: "feb-debt", fecha: "2026-02-03", gastoIngresoAhorro: "Gasto", categoria: "Debt payment", monto: 500 }),
+      tx({ id: "feb-save", fecha: "2026-02-04", gastoIngresoAhorro: "Ahorro", categoria: "Savings", monto: 1000 }),
+    ];
+    const current = buildReport(transactions, "2026-02", "month");
+    const previous = buildReport(transactions, previousReportMonth("2026-02", "month"), "month");
+
+    expect(buildReportComparison(current, previous, periodMonthLength("month"))).toMatchObject({
+      averageMonthlyExpenses: 2000,
+      debtPayments: 500,
+      expenseChange: 1000,
+      incomeChange: 1000,
+      savingsChange: 1000,
+      savingsRate: 20,
+      topExpenseCategory: { name: "Food", value: 1500 },
+      transactionCount: 4,
+    });
+  });
+});
+
 describe("filterTransactions", () => {
   const transactions: Transaction[] = [
     tx({ id: "a", fecha: "2026-01-10", gastoIngresoAhorro: "Ingreso", categoria: "Salary", descripcion: "Monthly salary", monto: 5000 }),
@@ -196,6 +229,45 @@ describe("sortTransactions", () => {
   });
 });
 
+describe("buildTransactionQuickPicks", () => {
+  it("builds recent unique templates from valid transactions", () => {
+    const picks = buildTransactionQuickPicks([
+      tx({ id: "old", fecha: "2026-03-01", categoria: "Food", descripcion: "Lunch", monto: 1000 }),
+      tx({ id: "new", fecha: "2026-03-12", categoria: "Food", descripcion: "Lunch", monto: 2000 }),
+      tx({ id: "gas", fecha: "2026-03-10", categoria: "Transport", descripcion: "Gas", monto: 50000 }),
+      tx({ id: "blank", fecha: "2026-03-11", categoria: "", descripcion: "No category", monto: 1 }),
+      tx({ id: "zero", fecha: "2026-03-11", categoria: "Other", descripcion: "Zero", monto: 0 }),
+    ]);
+
+    expect(picks).toHaveLength(2);
+    expect(picks[0]).toMatchObject({
+      amount: 2000,
+      category: "Food",
+      count: 2,
+      description: "Lunch",
+      lastDate: "2026-03-12",
+      subcategory: "Food",
+      type: "Gasto",
+    });
+    expect(picks[1]).toMatchObject({ amount: 50000, category: "Transport", description: "Gas" });
+  });
+
+  it("honors the quick-pick limit", () => {
+    const picks = buildTransactionQuickPicks(
+      Array.from({ length: 8 }, (_, index) =>
+        tx({
+          id: `t${index}`,
+          descripcion: `Item ${index}`,
+          fecha: `2026-03-${String(index + 1).padStart(2, "0")}`,
+        }),
+      ),
+      3,
+    );
+
+    expect(picks.map((pick) => pick.description)).toEqual(["Item 7", "Item 6", "Item 5"]);
+  });
+});
+
 describe("dedup keys", () => {
   it("treats case and whitespace differences as duplicates", () => {
     const a = tx({ categoria: "  Food ", descripcion: "LUNCH" });
@@ -216,6 +288,45 @@ describe("dedup keys", () => {
 
   it("normalizes category keys", () => {
     expect(categoryKey({ id: "c", name: " Personal ", type: "Gasto", color: "#D4AF37" })).toBe("personal");
+  });
+});
+
+describe("buildCategoryUsage", () => {
+  it("summarizes managed and missing categories from records", () => {
+    const usage = buildCategoryUsage(
+      state({
+        budgets: [{ id: "b", category: "Transport", monthlyLimit: 1000 }],
+        categories: [{ id: "c", name: "Food", type: "Gasto", color: "#D4AF37" }],
+        debts: [
+          {
+            id: "card",
+            name: "Visa",
+            currentBalance: 0,
+            dueDate: "",
+            isCreditCard: true,
+            linkedCategory: "TC",
+            monthlyPayment: 0,
+            notes: "",
+          },
+        ],
+        recurringPayments: [{ id: "r", name: "Salary", type: "Ingreso", category: "Salary", amount: 1000, dueDay: 1, active: true }],
+        transactions: [
+          tx({ id: "food", categoria: "Food", monto: 1200 }),
+          tx({ id: "transport", categoria: "Transport", monto: 5000 }),
+        ],
+      }),
+    );
+
+    expect(usage.map((category) => category.name)).toEqual(["Transport", "Salary", "TC", "Food"]);
+    expect(usage.find((category) => category.name === "Food")).toMatchObject({ managed: true, transactionCount: 1 });
+    expect(usage.find((category) => category.name === "Transport")).toMatchObject({
+      budgetCount: 1,
+      managed: false,
+      suggestedType: "Gasto",
+      transactionCount: 1,
+    });
+    expect(usage.find((category) => category.name === "Salary")).toMatchObject({ suggestedType: "Ingreso" });
+    expect(usage.find((category) => category.name === "TC")).toMatchObject({ creditCardCount: 1, suggestedType: "Gasto" });
   });
 });
 
@@ -353,6 +464,27 @@ describe("debt payment helpers", () => {
     expect(applyDebtPayment(debt).currentBalance).toBe(700);
     expect(applyDebtPayment({ ...debt, currentBalance: 100, monthlyPayment: 300 }).currentBalance).toBe(0);
   });
+
+  it("estimates payoff months and summarizes regular debt", () => {
+    expect(debtPayoffMonths(debt)).toBe(4);
+    expect(debtPayoffMonths({ ...debt, monthlyPayment: 0 })).toBeNull();
+
+    const overview = buildDebtOverview(
+      [
+        debt,
+        { id: "small", name: "Small", currentBalance: 100, monthlyPayment: 500, dueDate: "", notes: "" },
+      ],
+      [],
+    );
+
+    expect(overview).toMatchObject({
+      estimatedPayoffMonths: 4,
+      monthlyDebtPayments: 400,
+      regularDebtCount: 2,
+      regularDebtTotal: 1100,
+      totalDebt: 1100,
+    });
+  });
 });
 
 describe("buildHealthIssues", () => {
@@ -425,18 +557,33 @@ describe("buildHealthIssues", () => {
     const unmanagedState = state({
       budgets: [{ id: "b", category: "Transport", monthlyLimit: 1000 }],
       categories: [{ id: "c", name: "Food", type: "Gasto", color: "#D4AF37" }],
+      debts: [
+        {
+          id: "card",
+          name: "Visa",
+          currentBalance: 0,
+          dueDate: "",
+          isCreditCard: true,
+          linkedCategory: "TC",
+          monthlyPayment: 0,
+          notes: "",
+        },
+      ],
       recurringPayments: [{ id: "r", name: "Rent", type: "Gasto", category: "Rent", amount: 1000, dueDay: 1, active: true }],
       transactions: [tx({ id: "t", categoria: "Transport" })],
     });
-    const titles = buildHealthIssues(unmanagedState).map((i) => i.title);
-    expect(titles).toContain("Transaction category is not managed");
-    expect(titles).toContain("Budget category is not managed");
-    expect(titles).toContain("Recurring category is not managed");
+    const issues = buildHealthIssues(unmanagedState).filter((issue) => issue.title === "Category is used but not managed");
+    expect(issues).toHaveLength(3);
+    expect(issues.map((issue) => issue.detail)).toEqual([
+      "Transport is used in 1 transaction, 1 budget. Add it to Categories or rename the records using it.",
+      "Rent is used in 1 recurring. Add it to Categories or rename the records using it.",
+      "TC is used in 1 credit card. Add it to Categories or rename the records using it.",
+    ]);
 
     const withoutManagedCategories = buildHealthIssues(state({ transactions: [tx({ id: "t", categoria: "Transport" })] })).map(
       (i) => i.title,
     );
-    expect(withoutManagedCategories).not.toContain("Transaction category is not managed");
+    expect(withoutManagedCategories).not.toContain("Category is used but not managed");
   });
 
   it("returns no issues for clean data", () => {
@@ -607,6 +754,18 @@ describe("credit card", () => {
     expect(debt.payments).toHaveLength(1);
     expect(payment).toMatchObject({ amount: 180000, date: "2026-03-06", fromAccountId: "saving_1" });
     expect(creditCardBalance(debt, charges)).toBe(0);
+  });
+
+  it("summarizes card activity for display", () => {
+    const paid = { ...card, payments: [{ id: "p", date: "2026-03-06", amount: 50000 }] };
+    expect(buildCreditCardActivity(paid, charges, "2026-03-06")).toMatchObject({
+      balance: 130000,
+      charged: 180000,
+      chargeCount: 3,
+      lastChargeDate: "2026-03-10",
+      paid: 50000,
+      statement: { amountDue: 100000, closed: true, cutoffDate: "2026-03-05" },
+    });
   });
 
   it("effectiveDebtBalance derives for cards and passes through for plain debts", () => {

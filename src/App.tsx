@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -50,13 +50,18 @@ import {
   applyCreditCardPayment,
   applyDebtPayment,
   buildBudgetProgress,
+  buildCategoryUsage,
+  buildCreditCardActivity,
+  buildDebtOverview,
   buildForecast,
   buildHealthIssues,
   buildReport,
+  buildReportComparison,
   buildTransactionTotals,
+  buildTransactionQuickPicks,
   clampDueDay,
   creditCardBalance,
-  creditCardStatement,
+  debtPayoffMonths,
   effectiveDebtBalance,
   isCreditCard,
   coerceFinanceState,
@@ -72,6 +77,8 @@ import {
   parseRecurringPaymentRow,
   parseSavingsRow,
   parseTransactionRow,
+  periodMonthLength,
+  previousReportMonth,
   recurringPaymentKey,
   reportPeriods,
   savingsKey,
@@ -81,13 +88,16 @@ import {
   transactionFromRecurringPayment,
   uniqueSorted,
 } from "./finance";
-import type { BudgetProgress, ForecastData, HealthIssue, ReportData, ReportPeriod, TransactionSort } from "./finance";
+import type { BudgetProgress, CategoryUsage, DebtOverview, ForecastData, HealthIssue, ReportComparison, ReportData, ReportPeriod, TransactionQuickPick, TransactionSort } from "./finance";
 
 type Section = "past" | "current" | "future" | "settings";
 type CurrentSub = "overview" | "transactions" | "budgets" | "categories";
 type SettingsSub = "savings" | "debts" | "backup" | "health" | "install";
 type CsvKind = "transactions" | "savings" | "debts" | "recurring" | "budgets" | "categories";
 type NavigateFn = (section: Section, sub?: CurrentSub | SettingsSub) => void;
+type BackupMeta = {
+  lastExportAt: string;
+};
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
@@ -98,6 +108,44 @@ const transactionTypes: TransactionType[] = ["Gasto", "Ingreso", "Ahorro"];
 // multi-series charts stay readable without leaving the palette.
 const chartColors = ["#FFC212", "#D99E0B", "#8C6A10", "#FFDD7A", "#9A9AA5", "#F0F0F3"];
 const chartGold = "#FFC212";
+const backupMetaKey = "lukmanage-backup-meta";
+
+function colorForTransactionType(type: TransactionType) {
+  if (type === "Ingreso") return "#57B981";
+  if (type === "Ahorro") return "#7AA2E3";
+  return "#FFC212";
+}
+
+function loadBackupMeta(): BackupMeta {
+  if (typeof window === "undefined") return { lastExportAt: "" };
+  try {
+    return { lastExportAt: JSON.parse(window.localStorage.getItem(backupMetaKey) || "{}").lastExportAt || "" };
+  } catch {
+    return { lastExportAt: "" };
+  }
+}
+
+function saveBackupMeta(meta: BackupMeta) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(backupMetaKey, JSON.stringify(meta));
+  } catch {
+    // Backup metadata is helpful, not required for the finance records.
+  }
+}
+
+function setFormFieldValue(form: HTMLFormElement, name: string, value: string | number) {
+  const field = form.elements.namedItem(name);
+  if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement)) return;
+  field.value = String(value);
+}
+
+function focusFormField(form: HTMLFormElement, name: string, select = false) {
+  const field = form.elements.namedItem(name);
+  if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement)) return;
+  field.focus();
+  if (select && field instanceof HTMLInputElement) field.select();
+}
 
 function isAppStandalone() {
   if (typeof window === "undefined") return false;
@@ -113,6 +161,7 @@ export function App() {
   const [reportMonth, setReportMonth] = useState(todayIso().slice(0, 7));
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("month");
   const [state, setState] = useState<FinanceState>(() => createEmptyState());
+  const [backupMeta, setBackupMeta] = useState<BackupMeta>(() => loadBackupMeta());
   const [loaded, setLoaded] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(() => isAppStandalone());
@@ -217,15 +266,25 @@ export function App() {
     () => buildReport(state.transactions, reportMonth, reportPeriod, state.categories),
     [reportMonth, reportPeriod, state.categories, state.transactions],
   );
+  const previousReport = useMemo(
+    () => buildReport(state.transactions, previousReportMonth(reportMonth, reportPeriod), reportPeriod, state.categories),
+    [reportMonth, reportPeriod, state.categories, state.transactions],
+  );
+  const reportComparison = useMemo(
+    () => buildReportComparison(report, previousReport, periodMonthLength(reportPeriod)),
+    [previousReport, report, reportPeriod],
+  );
   const currentMonthReport = useMemo(
     () => buildReport(state.transactions, todayIso().slice(0, 7), "month", state.categories),
     [state.categories, state.transactions],
   );
   const forecast = useMemo(() => buildForecast(state), [state]);
+  const debtOverview = useMemo(() => buildDebtOverview(state.debts, state.transactions), [state.debts, state.transactions]);
   const budgetProgress = useMemo(
     () => buildBudgetProgress(state.transactions, state.budgets, todayIso().slice(0, 7)),
     [state.budgets, state.transactions],
   );
+  const categoryUsage = useMemo(() => buildCategoryUsage(state), [state]);
   const healthIssues = useMemo(() => buildHealthIssues(state), [state]);
 
   function addSavingsAccount(event: FormEvent<HTMLFormElement>) {
@@ -278,8 +337,12 @@ export function App() {
 
   function addTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     const form = new FormData(event.currentTarget);
+    const fecha = String(form.get("fecha") || todayIso());
+    const tipo = String(form.get("tipo") || "Gasto") as TransactionType;
     const categoria = normalizeLabel(form.get("categoria"));
+    const subcategoria = normalizeLabel(form.get("subcategoria"));
     const descripcion = normalizeLabel(form.get("descripcion"));
     if (!categoria || !descripcion) return;
 
@@ -287,17 +350,28 @@ export function App() {
       ...current,
       transactions: [
         createTransaction({
-          fecha: String(form.get("fecha") || todayIso()),
-          gastoIngresoAhorro: String(form.get("tipo") || "Gasto") as TransactionType,
+          fecha,
+          gastoIngresoAhorro: tipo,
           categoria,
-          subcategoria: normalizeLabel(form.get("subcategoria")),
+          subcategoria,
           descripcion,
           monto: toNumber(form.get("monto")),
         }),
         ...current.transactions,
       ],
     }));
-    event.currentTarget.reset();
+
+    const keepFastFields = form.get("keepFastFields") === "on";
+    formElement.reset();
+    setFormFieldValue(formElement, "fecha", keepFastFields ? fecha : todayIso());
+    if (keepFastFields) {
+      setFormFieldValue(formElement, "tipo", tipo);
+      setFormFieldValue(formElement, "categoria", categoria);
+      setFormFieldValue(formElement, "subcategoria", subcategoria);
+      focusFormField(formElement, "descripcion");
+      return;
+    }
+    focusFormField(formElement, "categoria");
   }
 
   function addBudget(event: FormEvent<HTMLFormElement>) {
@@ -340,6 +414,43 @@ export function App() {
       return { ...current, categories };
     });
     event.currentTarget.reset();
+  }
+
+  function addManagedCategory(name: string, type: TransactionType) {
+    const normalizedName = normalizeLabel(name);
+    if (!normalizedName) return;
+
+    setState((current) => {
+      const nextCategory = createCategory({
+        color: colorForTransactionType(type),
+        name: normalizedName,
+        type,
+      });
+      const existingKey = categoryKey(nextCategory);
+      if (current.categories.some((category) => categoryKey(category) === existingKey)) return current;
+
+      return { ...current, categories: [...current.categories, nextCategory] };
+    });
+  }
+
+  function addMissingCategories(missingCategories: CategoryUsage[]) {
+    if (!missingCategories.length) return;
+
+    setState((current) => {
+      const existingKeys = new Set(current.categories.map(categoryKey));
+      const categoriesToAdd = missingCategories
+        .filter((category) => !existingKeys.has(category.key))
+        .map((category) =>
+          createCategory({
+            color: colorForTransactionType(category.suggestedType),
+            name: category.name,
+            type: category.suggestedType,
+          }),
+        );
+
+      if (!categoriesToAdd.length) return current;
+      return { ...current, categories: [...current.categories, ...categoriesToAdd] };
+    });
   }
 
   function addRecurringPayment(event: FormEvent<HTMLFormElement>) {
@@ -547,7 +658,8 @@ export function App() {
   }
 
   function exportBackup() {
-    const payload = JSON.stringify({ exportedAt: new Date().toISOString(), version: 1, state }, null, 2);
+    const exportedAt = new Date().toISOString();
+    const payload = JSON.stringify({ exportedAt, version: 1, state }, null, 2);
     const blob = new Blob([payload], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -555,6 +667,10 @@ export function App() {
     link.download = `money-manager-backup-${todayIso()}.json`;
     link.click();
     URL.revokeObjectURL(url);
+    const nextMeta = { lastExportAt: exportedAt };
+    setBackupMeta(nextMeta);
+    saveBackupMeta(nextMeta);
+    setImportSummary(`Backup downloaded at ${formatDateTime(exportedAt)}.`);
   }
 
   function downloadFile(filename: string, contents: string, type: string) {
@@ -777,11 +893,14 @@ export function App() {
       const text = await file.text();
       const parsed = JSON.parse(text) as unknown;
       const nextState = coerceFinanceState(parsed);
+      const counts = financeRecordCounts(nextState);
+      const message = `Restore this backup and replace current local data?\n\nBackup contains ${counts.transactions} transactions, ${counts.savingsAccounts} savings banks, ${counts.debts} debts, ${counts.budgets} budgets, ${counts.categories} categories, and ${counts.recurringPayments} recurring items.`;
+      if (!window.confirm(message)) return;
 
       setState(nextState);
-      setImportSummary("Backup restored.");
+      setImportSummary(`Backup restored from ${file.name}.`);
     } catch {
-      window.alert("The selected backup file could not be read.");
+      setImportSummary("The selected backup file could not be read.");
     } finally {
       event.target.value = "";
     }
@@ -859,7 +978,10 @@ export function App() {
             {currentSub === "categories" && (
               <CategoriesView
                 categories={state.categories}
+                categoryUsage={categoryUsage}
                 onAdd={addCategory}
+                onAddAllMissing={addMissingCategories}
+                onAddMissing={addManagedCategory}
                 onRemove={removeCategory}
                 onUpdate={updateCategory}
               />
@@ -867,13 +989,14 @@ export function App() {
           </>
         )}
 
-        {activeSection === "past" && (
-          <ReportsView
-            month={reportMonth}
-            onMonthChange={setReportMonth}
-            onPeriodChange={setReportPeriod}
-            period={reportPeriod}
-            report={report}
+      {activeSection === "past" && (
+        <ReportsView
+          comparison={reportComparison}
+          month={reportMonth}
+          onMonthChange={setReportMonth}
+          onPeriodChange={setReportPeriod}
+          period={reportPeriod}
+          report={report}
           />
         )}
 
@@ -910,6 +1033,7 @@ export function App() {
             {settingsSub === "debts" && (
               <DebtsView
                 accounts={state.savingsAccounts}
+                debtOverview={debtOverview}
                 debts={state.debts}
                 onAdd={addDebt}
                 onPayCard={payCreditCard}
@@ -921,6 +1045,7 @@ export function App() {
             )}
             {settingsSub === "backup" && (
               <BackupView
+                backupMeta={backupMeta}
                 onCsvExport={exportCsv}
                 onCsvImport={importCsv}
                 onExport={exportBackup}
@@ -1365,18 +1490,27 @@ function BudgetsView({
 
 function CategoriesView({
   categories,
+  categoryUsage,
   onAdd,
+  onAddAllMissing,
+  onAddMissing,
   onRemove,
   onUpdate,
 }: {
   categories: Category[];
+  categoryUsage: CategoryUsage[];
   onAdd: (event: FormEvent<HTMLFormElement>) => void;
+  onAddAllMissing: (categories: CategoryUsage[]) => void;
+  onAddMissing: (name: string, type: TransactionType) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, patch: Partial<Category>) => void;
 }) {
+  const missingCategories = categoryUsage.filter((category) => !category.managed);
+  const managedUsedCount = categoryUsage.filter((category) => category.managed).length;
+
   return (
     <div className="stack">
-      <Header eyebrow="Phase 2" title="Categories" subtitle="Keep clean names for budgets, reports, and automation later." />
+      <Header eyebrow="Phase 2" title="Categories" subtitle="The official category list for transactions, budgets, reports, and cards." />
       <form className="entry-form category-form" onSubmit={onAdd}>
         <label>
           Name
@@ -1402,9 +1536,102 @@ function CategoriesView({
         </button>
       </form>
 
+      <section className="panel category-cleanup">
+        <div className="panel-title">
+          <Tags size={18} />
+          <h3>Used categories</h3>
+        </div>
+        <div className="metric-grid compact-metrics">
+          <Metric label="Managed" value={categories.length.toString()} tone="positive" />
+          <Metric label="Used" value={categoryUsage.length.toString()} tone="neutral" />
+          <Metric label="Matched" value={managedUsedCount.toString()} tone="positive" />
+          <Metric label="Missing" value={missingCategories.length.toString()} tone={missingCategories.length ? "negative" : "positive"} />
+        </div>
+        {missingCategories.length ? (
+          <>
+            <div className="panel-actions">
+              <button className="secondary-button" onClick={() => onAddAllMissing(missingCategories)} type="button">
+                <Plus size={18} />
+                Add all missing
+              </button>
+            </div>
+            <div className="category-usage-list">
+              {missingCategories.map((category) => (
+                <article className="category-usage-item" key={category.key}>
+                  <div>
+                    <strong>{category.name}</strong>
+                    <span>{categoryUsageText(category)}</span>
+                  </div>
+                  <em>{category.suggestedType}</em>
+                  <button
+                    className="secondary-button compact-action"
+                    onClick={() => onAddMissing(category.name, category.suggestedType)}
+                    type="button"
+                  >
+                    Add
+                  </button>
+                </article>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="empty-state">
+            {categoryUsage.length ? "All used categories are managed." : "Add transactions to see category usage here."}
+          </div>
+        )}
+      </section>
+
       <CategoriesTable categories={categories} onRemove={onRemove} onUpdate={onUpdate} />
     </div>
   );
+}
+
+function categoryUsageText(category: CategoryUsage) {
+  return [
+    category.transactionCount ? `${category.transactionCount} transaction${category.transactionCount === 1 ? "" : "s"}` : "",
+    category.budgetCount ? `${category.budgetCount} budget${category.budgetCount === 1 ? "" : "s"}` : "",
+    category.recurringCount ? `${category.recurringCount} recurring` : "",
+    category.creditCardCount ? `${category.creditCardCount} card${category.creditCardCount === 1 ? "" : "s"}` : "",
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function formatPayoffMonths(months: number | null) {
+  if (months == null) return "Set payment";
+  if (months === 0) return "Paid";
+  return `${months} mo`;
+}
+
+function formatSignedCurrency(value: number) {
+  if (value === 0) return formatCurrency(0);
+  return `${value > 0 ? "+" : "-"}${formatCurrency(Math.abs(value))}`;
+}
+
+function formatDateTime(value: string) {
+  if (!value) return "Never";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return new Intl.DateTimeFormat("es-CO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function financeRecordCounts(state: FinanceState) {
+  return {
+    budgets: state.budgets.length,
+    categories: state.categories.length,
+    debts: state.debts.length,
+    recurringPayments: state.recurringPayments.length,
+    savingsAccounts: state.savingsAccounts.length,
+    transactions: state.transactions.length,
+  };
+}
+
+function totalFinanceRecords(state: FinanceState) {
+  const counts = financeRecordCounts(state);
+  return Object.values(counts).reduce((sum, count) => sum + count, 0);
 }
 
 function SavingsView({
@@ -1442,6 +1669,7 @@ function SavingsView({
 
 function DebtsView({
   accounts,
+  debtOverview,
   debts,
   onAdd,
   onPayCard,
@@ -1451,6 +1679,7 @@ function DebtsView({
   transactions,
 }: {
   accounts: SavingsAccount[];
+  debtOverview: DebtOverview;
   debts: Debt[];
   onAdd: (event: FormEvent<HTMLFormElement>) => void;
   onPayCard: (id: string, fromAccountId?: string) => void;
@@ -1466,6 +1695,25 @@ function DebtsView({
   return (
     <div className="stack">
       <Header title="Debts" subtitle="Track what you owe, plus credit cards that float with spending." />
+      <section className="panel debt-clarity">
+        <div className="panel-title">
+          <Scale size={18} />
+          <h3>Debt picture</h3>
+        </div>
+        <div className="metric-grid">
+          <Metric label="Regular debt" value={formatCurrency(debtOverview.regularDebtTotal)} tone={debtOverview.regularDebtTotal ? "negative" : "positive"} />
+          <Metric label="Credit cards" value={formatCurrency(debtOverview.creditCardTotal)} tone={debtOverview.creditCardTotal ? "negative" : "positive"} />
+          <Metric label="Next debt payments" value={formatCurrency(debtOverview.monthlyDebtPayments)} tone="neutral" />
+          <Metric
+            label="Longest payoff"
+            value={debtOverview.estimatedPayoffMonths == null ? "Missing payment" : `${debtOverview.estimatedPayoffMonths} mo`}
+            tone={debtOverview.estimatedPayoffMonths == null && debtOverview.regularDebtTotal ? "negative" : "neutral"}
+          />
+        </div>
+        <p className="panel-copy">
+          Credit card purchases increase the card balance through their linked category. Paying the card only clears that balance and does not add another expense.
+        </p>
+      </section>
       <form className="entry-form debt-form" onSubmit={onAdd}>
         <label>
           Debt name
@@ -1547,8 +1795,8 @@ function CreditCardPanel({
   transactions: Transaction[];
 }) {
   const [fromAccountId, setFromAccountId] = useState("");
-  const balance = creditCardBalance(debt, transactions);
-  const statement = creditCardStatement(debt, transactions);
+  const activity = buildCreditCardActivity(debt, transactions);
+  const { balance, statement } = activity;
 
   return (
     <section className="panel credit-card-panel">
@@ -1559,6 +1807,8 @@ function CreditCardPanel({
       </div>
       <div className="metric-grid">
         <Metric label="Current balance" value={formatCurrency(balance)} tone={balance > 0 ? "negative" : "positive"} />
+        <Metric label="Charged to card" value={formatCurrency(activity.charged)} tone="negative" />
+        <Metric label="Card payments" value={formatCurrency(activity.paid)} tone="positive" />
         <Metric
           label={statement.closed ? `Statement due (closed ${statement.cutoffDate})` : "Statement (cycle open)"}
           value={formatCurrency(statement.amountDue)}
@@ -1566,8 +1816,14 @@ function CreditCardPanel({
         />
       </div>
       <p className="credit-card-hint">
-        Every <strong>Gasto</strong> in category <strong>{debt.linkedCategory}</strong> adds here automatically. Cutoff day: {debt.cutoffDay}.
+        Every <strong>Gasto</strong> in category <strong>{debt.linkedCategory}</strong> adds here automatically. Paying the card reduces
+        this card balance only; it is not posted as another expense.
       </p>
+      <div className="card-activity-line">
+        <span>{activity.chargeCount} charge{activity.chargeCount === 1 ? "" : "s"} linked</span>
+        <span>Last charge: {activity.lastChargeDate || "None"}</span>
+        <span>Cutoff day: {debt.cutoffDay || 1}</span>
+      </div>
       <div className="credit-card-actions">
         <label>
           Pay from
@@ -1615,16 +1871,54 @@ function TransactionsView({
   const [typeFilter, setTypeFilter] = useState<TransactionType | "all">("all");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [transactionSort, setTransactionSort] = useState<TransactionSort>("date-desc");
+  const formRef = useRef<HTMLFormElement>(null);
+  const quickPicks = useMemo(() => buildTransactionQuickPicks(transactions), [transactions]);
   const filteredTransactions = useMemo(
     () => sortTransactions(filterTransactions(transactions, { category: categoryFilter, search, type: typeFilter }), transactionSort),
     [categoryFilter, search, transactions, transactionSort, typeFilter],
   );
   const filteredTotals = useMemo(() => buildTransactionTotals(filteredTransactions), [filteredTransactions]);
+  const applyQuickPick = (pick: TransactionQuickPick) => {
+    const form = formRef.current;
+    if (!form) return;
+    setFormFieldValue(form, "fecha", todayIso());
+    setFormFieldValue(form, "tipo", pick.type);
+    setFormFieldValue(form, "categoria", pick.category);
+    setFormFieldValue(form, "subcategoria", pick.subcategory);
+    setFormFieldValue(form, "descripcion", pick.description);
+    setFormFieldValue(form, "monto", pick.amount);
+    focusFormField(form, "monto", true);
+  };
 
   return (
     <div className="stack">
       <Header title="Transactions" subtitle="Your six-column register starts here." />
-      <form className="entry-form transaction-form" onSubmit={onAdd}>
+      {quickPicks.length ? (
+        <section className="quick-entry">
+          <div className="panel-title">
+            <ReceiptText size={18} />
+            <h3>Recent</h3>
+          </div>
+          <div className="quick-pick-list">
+            {quickPicks.map((pick) => (
+              <button className="quick-pick" key={pick.id} onClick={() => applyQuickPick(pick)} type="button">
+                <span>
+                  <strong>{pick.description}</strong>
+                  <small>
+                    {pick.type} / {pick.category}
+                    {pick.subcategory ? ` / ${pick.subcategory}` : ""}
+                  </small>
+                </span>
+                <span className="quick-pick-meta">
+                  <em>{formatCurrency(pick.amount)}</em>
+                  {pick.count > 1 ? <small>{pick.count}x</small> : null}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      <form className="entry-form transaction-form" onSubmit={onAdd} ref={formRef}>
         <label>
           Fecha
           <input defaultValue={todayIso()} name="fecha" type="date" required />
@@ -1652,6 +1946,10 @@ function TransactionsView({
         <label>
           Monto
           <input name="monto" inputMode="decimal" placeholder="25000" required />
+        </label>
+        <label className="checkbox-label transaction-keep">
+          <input defaultChecked name="keepFastFields" type="checkbox" />
+          Keep date, type, category
         </label>
         <button className="primary-button" type="submit">
           <Plus size={18} />
@@ -1724,12 +2022,14 @@ function TransactionsView({
 }
 
 function ReportsView({
+  comparison,
   month,
   onMonthChange,
   onPeriodChange,
   period,
   report,
 }: {
+  comparison: ReportComparison;
   month: string;
   onMonthChange: (value: string) => void;
   onPeriodChange: (value: ReportPeriod) => void;
@@ -1773,6 +2073,27 @@ function ReportsView({
           tone={report.totals.netFlow >= 0 ? "positive" : "negative"}
         />
       </div>
+
+      <section className="panel report-review">
+        <div className="panel-title">
+          <Scale size={18} />
+          <h3>Period review</h3>
+        </div>
+        <div className="metric-grid compact-metrics">
+          <Metric label="Transactions" value={comparison.transactionCount.toString()} tone="neutral" />
+          <Metric label="Avg monthly expenses" value={formatCurrency(comparison.averageMonthlyExpenses)} tone="negative" />
+          <Metric label="Debt payments" value={formatCurrency(comparison.debtPayments)} tone="neutral" />
+          <Metric label="Savings rate" value={`${comparison.savingsRate}%`} tone={comparison.savingsRate > 0 ? "positive" : "neutral"} />
+        </div>
+        <div className="insight-grid">
+          <ReportInsight label="Top expense" value={comparison.topExpenseCategory ? `${comparison.topExpenseCategory.name} / ${formatCurrency(comparison.topExpenseCategory.value)}` : "No expenses"} />
+          <ReportInsight label="Expenses vs previous" value={formatSignedCurrency(comparison.expenseChange)} tone={comparison.expenseChange <= 0 ? "positive" : "negative"} />
+          <ReportInsight label="Income vs previous" value={formatSignedCurrency(comparison.incomeChange)} tone={comparison.incomeChange >= 0 ? "positive" : "negative"} />
+          <ReportInsight label="Savings vs previous" value={formatSignedCurrency(comparison.savingsChange)} tone={comparison.savingsChange >= 0 ? "positive" : "negative"} />
+          <ReportInsight label="Net flow vs previous" value={formatSignedCurrency(comparison.netFlowChange)} tone={comparison.netFlowChange >= 0 ? "positive" : "negative"} />
+          <ReportInsight label="Compared with" value={comparison.previousLabel} />
+        </div>
+      </section>
 
       <div className="chart-grid">
         <ChartPanel title="Monthly trend" empty={report.filteredTransactions.length === 0}>
@@ -1979,6 +2300,9 @@ function HealthView({ issues, onNavigate, state }: { issues: HealthIssue[]; onNa
           <AlertTriangle size={18} />
           <h3>Data checks</h3>
         </div>
+        <p className="panel-copy">
+          Category checks compare records against Current Month &gt; Categories. They are cleanup notes, not balance errors.
+        </p>
         {issues.length ? (
           <div className="health-list">
             {issues.map((issue) => (
@@ -2047,6 +2371,7 @@ function InstallView({
 }
 
 function BackupView({
+  backupMeta,
   importSummary,
   onClearData,
   onCsvExport,
@@ -2056,6 +2381,7 @@ function BackupView({
   onLoadSampleData,
   state,
 }: {
+  backupMeta: BackupMeta;
   importSummary: string;
   onClearData: () => void;
   onCsvExport: (kind: CsvKind) => void;
@@ -2065,9 +2391,31 @@ function BackupView({
   onLoadSampleData: () => void;
   state: FinanceState;
 }) {
+  const recordTotal = totalFinanceRecords(state);
+  const hasBackup = Boolean(backupMeta.lastExportAt);
+
   return (
     <div className="stack">
       <Header title="Backup" subtitle="Keep a local copy of the records you enter." />
+      <section className="panel backup-confidence">
+        <div className="panel-title">
+          <CheckCircle2 size={18} />
+          <h3>Backup confidence</h3>
+        </div>
+        <div className="metric-grid compact-metrics">
+          <Metric label="Local records" value={recordTotal.toString()} tone={recordTotal ? "positive" : "neutral"} />
+          <Metric label="Last JSON backup" value={formatDateTime(backupMeta.lastExportAt)} tone={hasBackup ? "positive" : "negative"} />
+          <Metric label="Restore mode" value="Replace local data" tone="neutral" />
+          <Metric label="CSV import" value="Append + skip duplicates" tone="positive" />
+        </div>
+        <div className="backup-checklist">
+          <span className={hasBackup ? "complete" : "attention"}>
+            {hasBackup ? "JSON backup downloaded on this device" : "Download a JSON backup before changing phone/browser data"}
+          </span>
+          <span>JSON restore asks before replacing current local data</span>
+          <span>CSV imports append rows and skip duplicates where possible</span>
+        </div>
+      </section>
       <div className="backup-grid">
         <section className="panel action-panel">
           <div className="panel-title">
@@ -2188,6 +2536,23 @@ function Header({ eyebrow = "Phase 1", subtitle, title }: { eyebrow?: string | n
 function Metric({ label, tone, value }: { label: string; tone: "positive" | "negative" | "neutral"; value: string }) {
   return (
     <article className={`metric ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
+
+function ReportInsight({
+  label,
+  tone = "neutral",
+  value,
+}: {
+  label: string;
+  tone?: "positive" | "negative" | "neutral";
+  value: string;
+}) {
+  return (
+    <article className={`report-insight ${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
     </article>
@@ -2382,6 +2747,8 @@ function DebtsTable({
           <th>Name</th>
           <th>Current balance</th>
           <th>Monthly payment</th>
+          <th>After next</th>
+          <th>Months left</th>
           <th>Due date</th>
           <th>Notes</th>
           <th aria-label="Actions" />
@@ -2413,6 +2780,8 @@ function DebtsTable({
                 onBlur={(event) => onUpdate(debt.id, { monthlyPayment: toNumber(event.currentTarget.value) })}
               />
             </td>
+            <td>{formatCurrency(Math.max(0, debt.currentBalance - Math.max(0, debt.monthlyPayment)))}</td>
+            <td>{formatPayoffMonths(debtPayoffMonths(debt))}</td>
             <td>
               <input
                 className="table-input"
@@ -2729,7 +3098,14 @@ function RecurringPaymentsTable({
 }
 
 function DataTable({ children }: { children: React.ReactNode }) {
-  return <div className="table-wrap"><table>{children}</table></div>;
+  return (
+    <div className="table-shell">
+      <div className="table-scroll-hint">Swipe table sideways</div>
+      <div className="table-wrap">
+        <table>{children}</table>
+      </div>
+    </div>
+  );
 }
 
 function EmptyTable({ message }: { message: string }) {
