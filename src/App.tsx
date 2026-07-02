@@ -27,8 +27,6 @@ import {
   CartesianGrid,
   Cell,
   Legend,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -49,6 +47,7 @@ import {
   budgetKey,
   applyCreditCardPayment,
   applyDebtPayment,
+  applyTransactionToSavingsAccounts,
   buildBudgetProgress,
   buildCategoryUsage,
   buildCreditCardActivity,
@@ -57,7 +56,6 @@ import {
   buildHealthIssues,
   buildReport,
   buildReportComparison,
-  buildTransactionTotals,
   buildTransactionQuickPicks,
   clampDueDay,
   creditCardBalance,
@@ -88,7 +86,7 @@ import {
   transactionFromRecurringPayment,
   uniqueSorted,
 } from "./finance";
-import type { BudgetProgress, CategoryUsage, DebtOverview, ForecastData, HealthIssue, ReportComparison, ReportData, ReportPeriod, TransactionQuickPick, TransactionSort } from "./finance";
+import type { BudgetProgress, CategoryUsage, DebtOverview, ForecastData, HealthIssue, ReportComparison, ReportData, ReportPeriod, TransactionQuickPick } from "./finance";
 
 type Section = "past" | "current" | "future" | "settings";
 type CurrentSub = "overview" | "transactions" | "budgets" | "categories";
@@ -346,20 +344,22 @@ export function App() {
     const descripcion = normalizeLabel(form.get("descripcion"));
     if (!categoria || !descripcion) return;
 
-    setState((current) => ({
-      ...current,
-      transactions: [
-        createTransaction({
-          fecha,
-          gastoIngresoAhorro: tipo,
-          categoria,
-          subcategoria,
-          descripcion,
-          monto: toNumber(form.get("monto")),
-        }),
-        ...current.transactions,
-      ],
-    }));
+    setState((current) => {
+      const transaction = createTransaction({
+        fecha,
+        gastoIngresoAhorro: tipo,
+        categoria,
+        subcategoria,
+        descripcion,
+        monto: toNumber(form.get("monto")),
+      });
+
+      return {
+        ...current,
+        savingsAccounts: applyTransactionToSavingsAccounts(current.savingsAccounts, transaction),
+        transactions: [transaction, ...current.transactions],
+      };
+    });
 
     const keepFastFields = form.get("keepFastFields") === "on";
     formElement.reset();
@@ -1182,7 +1182,7 @@ function Dashboard({
 
   return (
     <div className="stack">
-      <Header title="Dashboard" subtitle="Your current position and this month's movement." />
+      <Header eyebrow={null} title="Dashboard" subtitle="Your current position and this month's movement." />
       {!setupComplete ? <SetupChecklist items={setupItems} onNavigate={onNavigate} /> : null}
       <div className="metric-grid">
         <Metric label="Total saved" value={formatCurrency(totals.totalSavings)} tone="positive" />
@@ -1212,33 +1212,17 @@ function Dashboard({
         </div>
       </section>
 
-      <div className="chart-grid">
-        <ChartPanel title="Savings by bank" empty={savingsAccounts.length === 0}>
-          <ResponsiveContainer width="100%" height={280}>
-            <PieChart>
-              <Pie data={savingsAccounts} dataKey="balance" nameKey="bankName" outerRadius={95} label>
-                {savingsAccounts.map((account, index) => (
-                  <Cell key={account.id} fill={chartColors[index % chartColors.length]} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-        </ChartPanel>
-
-        <ChartPanel title="Debt by name" empty={debts.length === 0}>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={debtsForChart}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" />
-              <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
-              <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-              <Bar dataKey="currentBalance" fill={chartGold} radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartPanel>
-      </div>
+      <ChartPanel title="Debt by name" empty={debts.length === 0}>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={debtsForChart}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="name" />
+            <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
+            <Tooltip formatter={(value) => formatCurrency(Number(value))} />
+            <Bar dataKey="currentBalance" fill={chartGold} radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartPanel>
 
       <div className="chart-grid">
         <ChartPanel title="Current month flow" empty={currentMonthReport.filteredTransactions.length === 0}>
@@ -1867,17 +1851,15 @@ function TransactionsView({
   };
   transactions: Transaction[];
 }) {
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<TransactionType | "all">("all");
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const [transactionSort, setTransactionSort] = useState<TransactionSort>("date-desc");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [keyword, setKeyword] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
   const quickPicks = useMemo(() => buildTransactionQuickPicks(transactions), [transactions]);
   const filteredTransactions = useMemo(
-    () => sortTransactions(filterTransactions(transactions, { category: categoryFilter, search, type: typeFilter }), transactionSort),
-    [categoryFilter, search, transactions, transactionSort, typeFilter],
+    () => sortTransactions(filterTransactions(transactions, { dateFrom, dateTo, keyword }), "date-desc"),
+    [dateFrom, dateTo, keyword, transactions],
   );
-  const filteredTotals = useMemo(() => buildTransactionTotals(filteredTransactions), [filteredTransactions]);
   const applyQuickPick = (pick: TransactionQuickPick) => {
     const form = formRef.current;
     if (!form) return;
@@ -1960,62 +1942,31 @@ function TransactionsView({
         <Datalist id="description-options" options={suggestions.descriptions} />
       </form>
 
-      <form className="filter-controls">
-        <label>
-          Search
-          <input
-            onChange={(event) => setSearch(event.currentTarget.value)}
-            placeholder="Description, category, amount"
-            value={search}
-          />
-        </label>
-        <label>
-          Type
-          <select onChange={(event) => setTypeFilter(event.currentTarget.value as TransactionType | "all")} value={typeFilter}>
-            <option value="all">All</option>
-            {transactionTypes.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Category
-          <select onChange={(event) => setCategoryFilter(event.currentTarget.value)} value={categoryFilter}>
-            <option value="">All</option>
-            {suggestions.categories.map((category) => (
-              <option key={category} value={category}>
-                {category}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Sort
-          <select onChange={(event) => setTransactionSort(event.currentTarget.value as TransactionSort)} value={transactionSort}>
-            <option value="date-desc">Newest first</option>
-            <option value="date-asc">Oldest first</option>
-            <option value="amount-desc">Highest amount</option>
-            <option value="amount-asc">Lowest amount</option>
-          </select>
-        </label>
-        <div className="filter-count">
-          {filteredTransactions.length} of {transactions.length}
-        </div>
-      </form>
-
-      <div className="metric-grid">
-        <Metric label="Visible income" value={formatCurrency(filteredTotals.income)} tone="positive" />
-        <Metric label="Visible expenses" value={formatCurrency(filteredTotals.expenses)} tone="negative" />
-        <Metric label="Visible savings" value={formatCurrency(filteredTotals.savings)} tone="neutral" />
-        <Metric
-          label="Visible net"
-          value={formatCurrency(filteredTotals.netFlow)}
-          tone={filteredTotals.netFlow >= 0 ? "positive" : "negative"}
-        />
-      </div>
-
+      <section className="transaction-list-panel">
+        <form className="transaction-search">
+          <div className="date-search">
+            <label>
+              From
+              <input onChange={(event) => setDateFrom(event.currentTarget.value)} type="date" value={dateFrom} />
+            </label>
+            <label>
+              To
+              <input onChange={(event) => setDateTo(event.currentTarget.value)} type="date" value={dateTo} />
+            </label>
+          </div>
+          <label>
+            Keyword
+            <input
+              onChange={(event) => setKeyword(event.currentTarget.value)}
+              placeholder="Subcategory or description"
+              value={keyword}
+            />
+          </label>
+          <div className="filter-count">
+            {filteredTransactions.length} of {transactions.length}
+          </div>
+        </form>
+      </section>
       <TransactionsTable transactions={filteredTransactions} onRemove={onRemove} onUpdate={onUpdate} />
     </div>
   );

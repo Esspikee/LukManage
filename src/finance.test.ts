@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyCreditCardPayment,
   applyDebtPayment,
+  applyTransactionToSavingsAccounts,
   buildBudgetProgress,
   buildCategoryUsage,
   buildCreditCardActivity,
@@ -168,18 +169,20 @@ describe("buildReportComparison", () => {
 
 describe("filterTransactions", () => {
   const transactions: Transaction[] = [
-    tx({ id: "a", fecha: "2026-01-10", gastoIngresoAhorro: "Ingreso", categoria: "Salary", descripcion: "Monthly salary", monto: 5000 }),
-    tx({ id: "b", fecha: "2026-01-11", gastoIngresoAhorro: "Gasto", categoria: "Food", descripcion: "Lunch", monto: 1200 }),
-    tx({ id: "c", fecha: "2026-01-12", gastoIngresoAhorro: "Ahorro", categoria: "Emergency fund", descripcion: "Savings", monto: 800 }),
+    tx({ id: "a", fecha: "2026-01-10", gastoIngresoAhorro: "Ingreso", categoria: "Salary", subcategoria: "Work", descripcion: "Monthly salary", monto: 5000 }),
+    tx({ id: "b", fecha: "2026-01-11", gastoIngresoAhorro: "Gasto", categoria: "Food", subcategoria: "Restaurant", descripcion: "Lunch", monto: 1200 }),
+    tx({ id: "c", fecha: "2026-01-12", gastoIngresoAhorro: "Ahorro", categoria: "Emergency fund", subcategoria: "Goal", descripcion: "Savings", monto: 800 }),
   ];
 
-  it("filters transactions by type and category", () => {
-    expect(filterTransactions(transactions, { category: " food ", type: "Gasto" }).map((transaction) => transaction.id)).toEqual(["b"]);
+  it("filters transactions by date range", () => {
+    expect(filterTransactions(transactions, { dateFrom: "2026-01-11", dateTo: "2026-01-12" }).map((transaction) => transaction.id)).toEqual(["b", "c"]);
   });
 
-  it("searches across labels, date, type, and amount", () => {
-    expect(filterTransactions(transactions, { search: "salary" }).map((transaction) => transaction.id)).toEqual(["a"]);
-    expect(filterTransactions(transactions, { search: "800" }).map((transaction) => transaction.id)).toEqual(["c"]);
+  it("searches only subcategory and description", () => {
+    expect(filterTransactions(transactions, { keyword: "salary" }).map((transaction) => transaction.id)).toEqual(["a"]);
+    expect(filterTransactions(transactions, { keyword: "restaurant" }).map((transaction) => transaction.id)).toEqual(["b"]);
+    expect(filterTransactions(transactions, { keyword: "food" })).toEqual([]);
+    expect(filterTransactions(transactions, { keyword: "800" })).toEqual([]);
   });
 });
 
@@ -288,6 +291,33 @@ describe("dedup keys", () => {
 
   it("normalizes category keys", () => {
     expect(categoryKey({ id: "c", name: " Personal ", type: "Gasto", color: "#D4AF37" })).toBe("personal");
+  });
+});
+
+describe("applyTransactionToSavingsAccounts", () => {
+  const accounts: SavingsAccount[] = [
+    { id: "lulo", bankName: "Lulo Bank", balance: 100000 },
+    { id: "other", bankName: "Other Bank", balance: 50000 },
+  ];
+
+  it("adds ingreso amounts to the bank whose name matches the transaction category", () => {
+    const updated = applyTransactionToSavingsAccounts(accounts, tx({
+      categoria: " lulo bank ",
+      gastoIngresoAhorro: "Ingreso",
+      monto: 25000,
+    }));
+
+    expect(updated).toEqual([
+      { id: "lulo", bankName: "Lulo Bank", balance: 125000 },
+      { id: "other", bankName: "Other Bank", balance: 50000 },
+    ]);
+  });
+
+  it("does not change balances for gastos, ahorros, missing banks, or non-positive amounts", () => {
+    expect(applyTransactionToSavingsAccounts(accounts, tx({ categoria: "Lulo Bank", gastoIngresoAhorro: "Gasto", monto: 25000 }))).toBe(accounts);
+    expect(applyTransactionToSavingsAccounts(accounts, tx({ categoria: "Lulo Bank", gastoIngresoAhorro: "Ahorro", monto: 25000 }))).toBe(accounts);
+    expect(applyTransactionToSavingsAccounts(accounts, tx({ categoria: "Unknown", gastoIngresoAhorro: "Ingreso", monto: 25000 }))).toBe(accounts);
+    expect(applyTransactionToSavingsAccounts(accounts, tx({ categoria: "Lulo Bank", gastoIngresoAhorro: "Ingreso", monto: 0 }))).toBe(accounts);
   });
 });
 

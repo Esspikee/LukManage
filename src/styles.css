@@ -298,7 +298,7 @@ select {
 .empty-state,
 .entry-form,
 .report-controls,
-.filter-controls,
+.transaction-list-panel,
 .welcome-panel {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -313,12 +313,21 @@ select {
   padding: 18px;
 }
 
-.filter-controls {
+.transaction-list-panel {
+  padding: 12px;
+}
+
+.transaction-search {
   display: grid;
-  grid-template-columns: minmax(180px, 1.3fr) minmax(120px, 0.7fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
-  gap: 14px;
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 1fr) auto;
+  gap: 10px;
   align-items: end;
-  padding: 18px;
+}
+
+.date-search {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .report-label {
@@ -1314,7 +1323,7 @@ tr:last-child td {
   .quick-pick-list,
   .insight-grid,
   .report-controls,
-  .filter-controls,
+  .transaction-search,
   .setup-list,
   .entry-form,
   .debt-form,
@@ -1407,8 +1416,13 @@ tr:last-child td {
   .quick-entry,
   .entry-form,
   .report-controls,
-  .filter-controls {
+  .transaction-list-panel {
     padding: 16px;
+  }
+
+  .transaction-search,
+  .date-search {
+    grid-template-columns: 1fr;
   }
 
   .button-row,

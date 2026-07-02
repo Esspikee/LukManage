@@ -109,9 +109,9 @@ export type CreditCardActivity = {
 };
 
 export type TransactionFilters = {
-  category?: string;
-  search?: string;
-  type?: TransactionType | "all";
+  dateFrom?: string;
+  dateTo?: string;
+  keyword?: string;
 };
 
 export type TransactionSort = "date-desc" | "date-asc" | "amount-desc" | "amount-asc";
@@ -284,26 +284,23 @@ export function uniqueSorted(values: string[]) {
 }
 
 export function filterTransactions(transactions: Transaction[], filters: TransactionFilters) {
-  const search = normalizeLabel(filters.search ?? "").toLowerCase();
-  const category = normalizeLabel(filters.category ?? "").toLowerCase();
-  const type = filters.type && filters.type !== "all" ? filters.type : "";
+  const keyword = normalizeLabel(filters.keyword ?? "").toLowerCase();
+  const dateFrom = normalizeLabel(filters.dateFrom ?? "");
+  const dateTo = normalizeLabel(filters.dateTo ?? "");
 
   return transactions.filter((transaction) => {
-    if (type && transaction.gastoIngresoAhorro !== type) return false;
-    if (category && normalizeLabel(transaction.categoria).toLowerCase() !== category) return false;
-    if (!search) return true;
+    const transactionDate = comparableTransactionDate(transaction.fecha);
+    if (dateFrom && transactionDate < dateFrom) return false;
+    if (dateTo && transactionDate > dateTo) return false;
+    if (!keyword) return true;
 
     return [
-      transaction.fecha,
-      transaction.gastoIngresoAhorro,
-      transaction.categoria,
       transaction.subcategoria,
       transaction.descripcion,
-      String(transaction.monto),
     ]
       .join(" ")
       .toLowerCase()
-      .includes(search);
+      .includes(keyword);
   });
 }
 
@@ -517,6 +514,22 @@ export function transactionKey(transaction: Transaction) {
     normalizeLabel(transaction.descripcion).toLowerCase(),
     transaction.monto,
   ].join("|");
+}
+
+export function applyTransactionToSavingsAccounts(accounts: SavingsAccount[], transaction: Transaction): SavingsAccount[] {
+  if (transaction.gastoIngresoAhorro !== "Ingreso" || transaction.monto <= 0) return accounts;
+
+  const categoryKey = normalizeLabel(transaction.categoria).toLowerCase();
+  if (!categoryKey) return accounts;
+
+  let changed = false;
+  const nextAccounts = accounts.map((account) => {
+    if (normalizeLabel(account.bankName).toLowerCase() !== categoryKey) return account;
+    changed = true;
+    return { ...account, balance: account.balance + transaction.monto };
+  });
+
+  return changed ? nextAccounts : accounts;
 }
 
 export function savingsKey(account: SavingsAccount) {
