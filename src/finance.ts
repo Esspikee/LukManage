@@ -310,7 +310,7 @@ export function buildReport(
 
   const categoryColors = buildCategoryColorMap(categories);
   const categoryExpenses = Array.from(expenseByCategory, ([name, value]) => ({
-    color: categoryColors.get(normalizeLabel(name).toLowerCase()) || "#B33030",
+    color: categoryColors.get(normalizeLabel(name).toLowerCase()) || "#FFC212",
     name,
     value,
   })).sort(
@@ -958,7 +958,7 @@ export function parseBudgetRow(header: string[], row: string[]): Budget | null {
 export function parseCategoryRow(header: string[], row: string[]): Category | null {
   const name = normalizeLabel(csvValue(header, row, ["name", "category", "categoria", "nombre"]));
   const type = normalizeTransactionType(csvValue(header, row, ["type", "tipo", "gasto/ingreso/ahorro"]));
-  const color = normalizeColor(csvValue(header, row, ["color", "colour"])) || "#D4AF37";
+  const color = normalizeColor(csvValue(header, row, ["color", "colour"])) || "#FFC212";
 
   if (!name || !type) return null;
 

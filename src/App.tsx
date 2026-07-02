@@ -94,7 +94,10 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 const transactionTypes: TransactionType[] = ["Gasto", "Ingreso", "Ahorro"];
-const chartColors = ["#2563eb", "#16a34a", "#dc2626", "#ca8a04", "#9333ea", "#0891b2"];
+// Golden chart family: gold anchor, then tonal steps + one neutral so
+// multi-series charts stay readable without leaving the palette.
+const chartColors = ["#FFC212", "#D99E0B", "#8C6A10", "#FFDD7A", "#9A9AA5", "#F0F0F3"];
+const chartGold = "#FFC212";
 
 function isAppStandalone() {
   if (typeof window === "undefined") return false;
@@ -1106,7 +1109,7 @@ function Dashboard({
               <XAxis dataKey="name" />
               <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
               <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-              <Bar dataKey="currentBalance" fill="#dc2626" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="currentBalance" fill={chartGold} radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartPanel>
@@ -1120,7 +1123,7 @@ function Dashboard({
               <XAxis dataKey="name" />
               <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
               <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-              <Bar dataKey="value" fill="#2563eb" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="value" fill={chartGold} radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartPanel>
@@ -1150,7 +1153,7 @@ function Dashboard({
             <XAxis dataKey="name" />
             <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
             <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-            <Bar dataKey="value" fill="#2563eb" radius={[6, 6, 0, 0]} />
+            <Bar dataKey="value" fill={chartGold} radius={[6, 6, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </ChartPanel>
@@ -1794,7 +1797,7 @@ function ReportsView({
               <XAxis dataKey="name" />
               <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
               <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-              <Bar dataKey="value" fill="#2563eb" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="value" fill={chartGold} radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartPanel>
@@ -1919,7 +1922,7 @@ function FutureView({
             <XAxis dataKey="name" />
             <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
             <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-            <Bar dataKey="value" fill="#2563eb" radius={[6, 6, 0, 0]} />
+            <Bar dataKey="value" fill={chartGold} radius={[6, 6, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </ChartPanel>

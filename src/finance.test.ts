@@ -122,7 +122,7 @@ describe("buildReport", () => {
 
   it("aggregates expenses by category, sorted descending", () => {
     const report = buildReport(transactions, "2026-06", "year");
-    expect(report.categoryExpenses).toEqual([{ color: "#B33030", name: "Food", value: 2000 }]);
+    expect(report.categoryExpenses).toEqual([{ color: "#FFC212", name: "Food", value: 2000 }]);
   });
 
   it("uses managed category colors for expense categories", () => {
