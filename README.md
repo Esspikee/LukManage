@@ -1,6 +1,16 @@
-# Personal Finance Local App
+# LukManage
 
-Phase 1 starts the app from zero with a local-first foundation. It is built for personal use and does not require a production server.
+LukManage is a personal, local-first finance app for tracking savings, debts, transactions, past reports, and future cash flow from a phone.
+
+The app can be hosted on GitHub Pages, but the finance records entered in the app stay in the browser storage on the device. The repository must not contain real CSV exports, spreadsheet files, or personal backup files.
+
+## Privacy Model
+
+- The hosted app shell is static HTML, CSS, and JavaScript.
+- Personal records are stored locally in the phone browser using IndexedDB.
+- JSON and CSV exports are manual backups that should stay private.
+- Real finance files are ignored by git through `.gitignore`.
+- If sensitive files were ever pushed, remove them from git history before treating the repository as clean.
 
 ## Stack
 
@@ -8,78 +18,106 @@ Phase 1 starts the app from zero with a local-first foundation. It is built for 
 - React
 - Vite static build
 - Recharts for charts
-- Local browser storage for the current prototype data
-- SQLite schema prepared in `database/schema.sql`
+- IndexedDB through a repository layer in `src/persistence.ts`
+- Vitest for logic and persistence tests
+- PWA support through `vite-plugin-pwa`
+- GitHub Pages deployment workflow in `.github/workflows/deploy.yml`
+- SQLite schema draft in `database/schema.sql` for a possible future desktop route
 
-The long-term desktop route remains Tauri + SQLite. This machine does not currently expose Rust/Tauri build tools, so the first implementation is a Tauri-ready React foundation that can run as a local static app while the database boundary is finalized.
+## App Structure
 
-## Current Screens
+The main navigation is intentionally simple:
 
-- Dashboard
-  - Setup checklist while first-use records are incomplete
-  - Total saved
-  - Total debt
-  - Net position
-  - Current month income, expenses, savings, and net flow
-  - Savings chart by bank
-  - Debt chart by debt name
-  - Current month flow and expense-category charts
-  - Transaction totals
-- Savings
-  - Bank name
-  - Balance
-  - Inline row editing
-- Debts
-  - Debt name
-  - Current balance
-  - Monthly payment
-  - Due date
-  - Notes
-  - Inline row editing
-- Transactions
-  - `fecha`
-  - `gasto/ingreso/Ahorro`
-  - `Categoria`
-  - `Subcategoria`
-  - `descripcion`
-  - `monto`
-  - Inline row editing
-  - Category, subcategory, and description suggestions from existing records
-  - Whitespace normalization for cleaner labels
-- Reports
-  - Filter by month, bimester, trimester, quarter, semester, or year
-  - Income, expenses, savings, and net-flow metrics
-  - Flow totals chart
-  - Expenses by category chart
-  - Read-only filtered transaction table
+- Past
+  - Historical reports
+  - Month, bimester, trimester, quarter, semester, and year filters
+  - Flow totals, category charts, and period transactions
+- Current Month
+  - Overview dashboard
+  - Savings, debt, net position, current-month movement, and health status
+  - Monthly category budgets and progress
+  - Transaction register using the six columns:
+    - `fecha`
+    - `gasto/ingreso/Ahorro`
+    - `Categoria`
+    - `Subcategoria`
+    - `descripcion`
+    - `monto`
 - Future
-  - Add recurring expected income, expenses, and savings
-  - Toggle recurring items active/inactive
-  - Include debt monthly payments in the monthly forecast
-  - Project end-of-month balance from current savings and expected movements
-- Health
-  - Flags invalid transaction dates
-  - Flags zero or negative transaction amounts
-  - Flags empty transaction labels
-  - Flags debts without monthly payments
-  - Flags inactive or incomplete recurring items
-- Backup
-  - Export local data as JSON
-  - Restore local data from JSON
-  - Export transactions, savings, debts, and recurring payments as separate CSV files
-  - Import transactions, savings, debts, and recurring payments from CSV files
-  - Load sample data for testing
-  - Clear local data after confirmation
+  - Recurring expected income, expenses, and savings
+  - Debt monthly payments
+  - Projected end balance
+- Settings
+  - Savings banks
+  - Debts
+  - Backup/import/export
+  - Health checks
+  - Install/status checks
 
-CSV imports append records to the current local data. Use JSON restore when you want to replace the whole local state.
-CSV imports skip duplicates and show an import summary. Transaction duplicates are detected from the six transaction columns; savings, debts, and recurring payments are detected by name.
+## Data Safety
+
+Use `Settings > Backup > Download JSON` regularly, especially before clearing browser data, changing phones, or reinstalling the app from the home screen.
+
+CSV imports append records and skip duplicates. JSON restore replaces the local state with the selected backup.
+
+Ignored private file patterns include:
+
+- `*.csv`
+- `*.xlsx`
+- `*.xls`
+- `money-manager-backup-*.json`
+- `finance-backup-*.json`
+- `backup-*.json`
 
 ## Commands
 
 ```powershell
 $env:Path = 'C:\Users\laura\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;' + $env:Path
 & 'C:\Users\laura\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\pnpm.cmd' install
+& 'C:\Users\laura\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\pnpm.cmd' test
 & 'C:\Users\laura\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\pnpm.cmd' build
 ```
 
-The production files are generated in `dist/`.
+Preview locally:
+
+```powershell
+& 'C:\Users\laura\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\pnpm.cmd' preview --host 127.0.0.1 --port 4173
+```
+
+The GitHub Pages preview path is:
+
+```text
+http://127.0.0.1:4173/LukManage/
+```
+
+## Phase Plan
+
+Phase 1 is the personal-use foundation:
+
+- Keep the three main tabs stable.
+- Polish phone layout and first setup.
+- Make backup/restore clear and reliable.
+- Keep personal files out of git.
+- Add tests around data logic as flows change.
+
+Phase 2 improves daily use:
+
+- Budgets and current-month progress. Started with monthly category limits in `Current Month > Budgets`.
+- Better category management. Started with managed category names, types, colors, chart coloring, and CSV backup in `Current Month > Categories`.
+- Debt payment workflow. Started with posting debt payments to transactions while reducing the debt balance.
+- Faster daily transaction review. Started with search, type, category filters, sorting, and visible-row totals in `Current Month > Transactions`.
+- Stronger data health checks. Started with actionable review links, duplicate transaction detection, and unmanaged-category warnings for manual, imported, or posted rows.
+- More useful reports. Started with month-by-month trend charts inside the selected report period.
+- More practical future projections. Started with an actionable monthly due list, rolling projected-balance chart, monthly projection table, and recurring-to-transaction posting.
+- Stronger installable-phone experience. Started with PWA identity colors and `Settings > Install` status.
+
+Phase 3 investigates automation:
+
+- Android notification listener routes.
+- Bank email parsing.
+- CSV or statement imports.
+- Tasker or MacroDroid workflows.
+- OCR only as a fallback.
+- Direct bank integrations only if they are safe and worth the tradeoff.
+
+Automation should send detected transactions to a review queue with duplicate detection. It should not silently write messy notification data into final records.

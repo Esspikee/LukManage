@@ -2,3 +2,11 @@ node_modules/
 dist/
 .DS_Store
 .claude/
+
+# Personal finance data exports/backups
+*.csv
+*.xlsx
+*.xls
+money-manager-backup-*.json
+finance-backup-*.json
+backup-*.json

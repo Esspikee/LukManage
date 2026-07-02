@@ -31,6 +31,23 @@ CREATE TABLE IF NOT EXISTS transactions (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS budgets (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL UNIQUE,
+  monthly_limit INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  type TEXT NOT NULL CHECK (type IN ('Gasto', 'Ingreso', 'Ahorro')),
+  color TEXT NOT NULL DEFAULT '#D4AF37',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS recurring_payments (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -46,5 +63,7 @@ CREATE TABLE IF NOT EXISTS recurring_payments (
 CREATE INDEX IF NOT EXISTS idx_transactions_fecha ON transactions (fecha);
 CREATE INDEX IF NOT EXISTS idx_transactions_tipo ON transactions (gasto_ingreso_ahorro);
 CREATE INDEX IF NOT EXISTS idx_transactions_categoria ON transactions (categoria);
+CREATE INDEX IF NOT EXISTS idx_budgets_category ON budgets (category);
+CREATE INDEX IF NOT EXISTS idx_categories_type ON categories (type);
 CREATE INDEX IF NOT EXISTS idx_debts_due_date ON debts (due_date);
 CREATE INDEX IF NOT EXISTS idx_recurring_payments_active ON recurring_payments (active);

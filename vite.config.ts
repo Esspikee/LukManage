@@ -5,17 +5,29 @@ import { VitePWA } from "vite-plugin-pwa";
 // Served from https://<user>.github.io/LukManage/ on GitHub Pages.
 export default defineConfig({
   base: "/LukManage/",
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("recharts") || id.includes("d3-")) return "charts";
+          if (id.includes("idb")) return "storage";
+          return undefined;
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["icons/apple-touch-icon.png"],
       manifest: {
-        name: "Money Manager",
-        short_name: "Money",
-        description: "Local-first personal finance - savings, debts, and monthly cash flow.",
-        theme_color: "#2563eb",
-        background_color: "#f6f7f9",
+        name: "LukManage",
+        short_name: "LukManage",
+        description: "Local-first personal finance for savings, debts, reports, and future cash flow.",
+        theme_color: "#1b1b1b",
+        background_color: "#171615",
         display: "standalone",
         orientation: "portrait",
         start_url: ".",

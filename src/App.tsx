@@ -15,6 +15,8 @@ import {
   Scale,
   Settings,
   Sparkles,
+  Smartphone,
+  Tags,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -33,23 +35,33 @@ import {
 } from "recharts";
 import { formatCurrency, normalizeLabel, parseCsv, toCsv, toNumber, todayIso } from "./format";
 import {
+  createBudget,
+  createCategory,
   createDebt,
   createRecurringPayment,
   createSavingsAccount,
   createTransaction,
 } from "./storage";
 import { repository } from "./persistence";
-import type { Debt, FinanceState, RecurringPayment, SavingsAccount, Transaction, TransactionType } from "./types";
+import type { Budget, Category, Debt, FinanceState, RecurringPayment, SavingsAccount, Transaction, TransactionType } from "./types";
 import {
+  budgetKey,
+  applyDebtPayment,
+  buildBudgetProgress,
   buildForecast,
   buildHealthIssues,
   buildReport,
+  buildTransactionTotals,
   clampDueDay,
   coerceFinanceState,
   createEmptyState,
   createSampleState,
+  categoryKey,
   debtKey,
+  filterTransactions,
   importMessage,
+  parseBudgetRow,
+  parseCategoryRow,
   parseDebtRow,
   parseRecurringPaymentRow,
   parseSavingsRow,
@@ -57,19 +69,32 @@ import {
   recurringPaymentKey,
   reportPeriods,
   savingsKey,
+  sortTransactions,
   transactionKey,
+  transactionFromDebtPayment,
+  transactionFromRecurringPayment,
   uniqueSorted,
 } from "./finance";
-import type { ForecastData, HealthIssue, ReportData, ReportPeriod } from "./finance";
+import type { BudgetProgress, ForecastData, HealthIssue, ReportData, ReportPeriod, TransactionSort } from "./finance";
 
 type Section = "past" | "current" | "future" | "settings";
-type CurrentSub = "overview" | "transactions";
-type SettingsSub = "savings" | "debts" | "backup" | "health";
-type CsvKind = "transactions" | "savings" | "debts" | "recurring";
+type CurrentSub = "overview" | "transactions" | "budgets" | "categories";
+type SettingsSub = "savings" | "debts" | "backup" | "health" | "install";
+type CsvKind = "transactions" | "savings" | "debts" | "recurring" | "budgets" | "categories";
 type NavigateFn = (section: Section, sub?: CurrentSub | SettingsSub) => void;
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
 
 const transactionTypes: TransactionType[] = ["Gasto", "Ingreso", "Ahorro"];
 const chartColors = ["#2563eb", "#16a34a", "#dc2626", "#ca8a04", "#9333ea", "#0891b2"];
+
+function isAppStandalone() {
+  if (typeof window === "undefined") return false;
+  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
+}
 
 export function App() {
   const [activeSection, setActiveSection] = useState<Section>("current");
@@ -80,6 +105,10 @@ export function App() {
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("month");
   const [state, setState] = useState<FinanceState>(() => createEmptyState());
   const [loaded, setLoaded] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isStandalone, setIsStandalone] = useState(() => isAppStandalone());
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  const [serviceWorkerReady, setServiceWorkerReady] = useState(false);
 
   const navigate: NavigateFn = (section, sub) => {
     setActiveSection(section);
@@ -109,6 +138,36 @@ export function App() {
     void repository.save(state);
   }, [state, loaded]);
 
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const handleAppInstalled = () => {
+      setIsStandalone(true);
+      setInstallPrompt(null);
+    };
+    const syncOnlineStatus = () => setIsOnline(navigator.onLine);
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+    window.addEventListener("online", syncOnlineStatus);
+    window.addEventListener("offline", syncOnlineStatus);
+    setIsStandalone(isAppStandalone());
+
+    if ("serviceWorker" in navigator) {
+      if (navigator.serviceWorker.controller) setServiceWorkerReady(true);
+      void navigator.serviceWorker.ready.then(() => setServiceWorkerReady(true));
+    }
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+      window.removeEventListener("online", syncOnlineStatus);
+      window.removeEventListener("offline", syncOnlineStatus);
+    };
+  }, []);
+
   const totals = useMemo(() => {
     const totalSavings = state.savingsAccounts.reduce((sum, account) => sum + account.balance, 0);
     const totalDebt = state.debts.reduce((sum, debt) => sum + debt.currentBalance, 0);
@@ -133,22 +192,31 @@ export function App() {
   }, [state]);
 
   const suggestions = useMemo(() => {
-    const categories = uniqueSorted(state.transactions.map((transaction) => transaction.categoria));
+    const categories = uniqueSorted([
+      ...state.categories.map((category) => category.name),
+      ...state.transactions.map((transaction) => transaction.categoria),
+      ...state.budgets.map((budget) => budget.category),
+      ...state.recurringPayments.map((payment) => payment.category),
+    ]);
     const subcategories = uniqueSorted(state.transactions.map((transaction) => transaction.subcategoria));
     const descriptions = uniqueSorted(state.transactions.map((transaction) => transaction.descripcion));
 
     return { categories, descriptions, subcategories };
-  }, [state.transactions]);
+  }, [state.budgets, state.categories, state.recurringPayments, state.transactions]);
 
   const report = useMemo(
-    () => buildReport(state.transactions, reportMonth, reportPeriod),
-    [reportMonth, reportPeriod, state.transactions],
+    () => buildReport(state.transactions, reportMonth, reportPeriod, state.categories),
+    [reportMonth, reportPeriod, state.categories, state.transactions],
   );
   const currentMonthReport = useMemo(
-    () => buildReport(state.transactions, todayIso().slice(0, 7), "month"),
-    [state.transactions],
+    () => buildReport(state.transactions, todayIso().slice(0, 7), "month", state.categories),
+    [state.categories, state.transactions],
   );
   const forecast = useMemo(() => buildForecast(state), [state]);
+  const budgetProgress = useMemo(
+    () => buildBudgetProgress(state.transactions, state.budgets, todayIso().slice(0, 7)),
+    [state.budgets, state.transactions],
+  );
   const healthIssues = useMemo(() => buildHealthIssues(state), [state]);
 
   function addSavingsAccount(event: FormEvent<HTMLFormElement>) {
@@ -213,6 +281,48 @@ export function App() {
     event.currentTarget.reset();
   }
 
+  function addBudget(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const category = normalizeLabel(form.get("category"));
+    if (!category) return;
+
+    setState((current) => {
+      const nextBudget = createBudget({ category, monthlyLimit: toNumber(form.get("monthlyLimit")) });
+      const existingKey = budgetKey(nextBudget);
+      const budgets = current.budgets.some((budget) => budgetKey(budget) === existingKey)
+        ? current.budgets.map((budget) => (budgetKey(budget) === existingKey ? { ...budget, ...nextBudget, id: budget.id } : budget))
+        : [...current.budgets, nextBudget];
+
+      return { ...current, budgets };
+    });
+    event.currentTarget.reset();
+  }
+
+  function addCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = normalizeLabel(form.get("name"));
+    if (!name) return;
+
+    setState((current) => {
+      const nextCategory = createCategory({
+        color: String(form.get("color") || "#D4AF37"),
+        name,
+        type: String(form.get("type") || "Gasto") as TransactionType,
+      });
+      const existingKey = categoryKey(nextCategory);
+      const categories = current.categories.some((category) => categoryKey(category) === existingKey)
+        ? current.categories.map((category) =>
+            categoryKey(category) === existingKey ? { ...category, ...nextCategory, id: category.id } : category,
+          )
+        : [...current.categories, nextCategory];
+
+      return { ...current, categories };
+    });
+    event.currentTarget.reset();
+  }
+
   function addRecurringPayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -267,10 +377,55 @@ export function App() {
     }));
   }
 
+  function postDebtPayment(id: string) {
+    const debt = state.debts.find((item) => item.id === id);
+    if (!debt || debt.monthlyPayment <= 0 || debt.currentBalance <= 0) return;
+
+    const transaction = transactionFromDebtPayment(debt, todayIso());
+    const alreadyExists = state.transactions.some((item) => transactionKey(item) === transactionKey(transaction));
+    if (alreadyExists && !window.confirm("This debt payment already exists as a transaction for today. Post another copy?")) return;
+
+    setState((current) => ({
+      ...current,
+      debts: current.debts.map((item) => (item.id === id ? applyDebtPayment(item) : item)),
+      transactions: [transaction, ...current.transactions],
+    }));
+    setActiveSection("current");
+    setCurrentSub("transactions");
+  }
+
   function removeTransaction(id: string) {
     setState((current) => ({
       ...current,
       transactions: current.transactions.filter((transaction) => transaction.id !== id),
+    }));
+  }
+
+  function removeBudget(id: string) {
+    setState((current) => ({
+      ...current,
+      budgets: current.budgets.filter((budget) => budget.id !== id),
+    }));
+  }
+
+  function removeCategory(id: string) {
+    setState((current) => ({
+      ...current,
+      categories: current.categories.filter((category) => category.id !== id),
+    }));
+  }
+
+  function updateBudget(id: string, patch: Partial<Budget>) {
+    setState((current) => ({
+      ...current,
+      budgets: current.budgets.map((budget) => (budget.id === id ? { ...budget, ...patch } : budget)),
+    }));
+  }
+
+  function updateCategory(id: string, patch: Partial<Category>) {
+    setState((current) => ({
+      ...current,
+      categories: current.categories.map((category) => (category.id === id ? { ...category, ...patch } : category)),
     }));
   }
 
@@ -299,11 +454,29 @@ export function App() {
     }));
   }
 
+  function postRecurringPayment(id: string) {
+    const payment = state.recurringPayments.find((item) => item.id === id);
+    if (!payment) return;
+
+    const transaction = transactionFromRecurringPayment(payment, todayIso());
+    const alreadyExists = state.transactions.some((item) => transactionKey(item) === transactionKey(transaction));
+    if (alreadyExists && !window.confirm("This recurring item already exists as a transaction for today. Post another copy?")) return;
+
+    setState((current) => ({
+      ...current,
+      transactions: [transaction, ...current.transactions],
+    }));
+    setActiveSection("current");
+    setCurrentSub("transactions");
+  }
+
   function loadSampleData() {
     const hasData =
       state.savingsAccounts.length ||
       state.debts.length ||
       state.transactions.length ||
+      state.budgets.length ||
+      state.categories.length ||
       state.recurringPayments.length;
     if (hasData && !window.confirm("Replace current local data with sample data?")) return;
 
@@ -316,6 +489,15 @@ export function App() {
 
     setState(createEmptyState());
     setImportSummary("Local data cleared.");
+  }
+
+  async function installApp() {
+    if (!installPrompt) return;
+
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    setInstallPrompt(null);
+    if (choice.outcome === "accepted") setIsStandalone(true);
   }
 
   function exportBackup() {
@@ -384,6 +566,30 @@ export function App() {
             payment.dueDay,
             payment.active ? "true" : "false",
           ]),
+        ]),
+        "text/csv;charset=utf-8",
+      );
+      return;
+    }
+
+    if (kind === "budgets") {
+      downloadFile(
+        `budgets-${todayIso()}.csv`,
+        toCsv([
+          ["category", "monthly_limit"],
+          ...state.budgets.map((budget) => [budget.category, budget.monthlyLimit]),
+        ]),
+        "text/csv;charset=utf-8",
+      );
+      return;
+    }
+
+    if (kind === "categories") {
+      downloadFile(
+        `categories-${todayIso()}.csv`,
+        toCsv([
+          ["name", "type", "color"],
+          ...state.categories.map((category) => [category.name, category.type, category.color]),
         ]),
         "text/csv;charset=utf-8",
       );
@@ -465,6 +671,40 @@ export function App() {
         return;
       }
 
+      if (kind === "budgets") {
+        const parsed = body
+          .map((row) => parseBudgetRow(header, row))
+          .filter((budget): budget is Budget => Boolean(budget));
+        const existingKeys = new Set(state.budgets.map(budgetKey));
+        const imported = parsed.filter((budget) => {
+          const key = budgetKey(budget);
+          if (existingKeys.has(key)) return false;
+          existingKeys.add(key);
+          return true;
+        });
+
+        setState((current) => ({ ...current, budgets: [...current.budgets, ...imported] }));
+        setImportSummary(importMessage("budgets", imported.length, parsed.length - imported.length, body.length - parsed.length));
+        return;
+      }
+
+      if (kind === "categories") {
+        const parsed = body
+          .map((row) => parseCategoryRow(header, row))
+          .filter((category): category is Category => Boolean(category));
+        const existingKeys = new Set(state.categories.map(categoryKey));
+        const imported = parsed.filter((category) => {
+          const key = categoryKey(category);
+          if (existingKeys.has(key)) return false;
+          existingKeys.add(key);
+          return true;
+        });
+
+        setState((current) => ({ ...current, categories: [...current.categories, ...imported] }));
+        setImportSummary(importMessage("categories", imported.length, parsed.length - imported.length, body.length - parsed.length));
+        return;
+      }
+
       const parsed = body.map((row) => parseDebtRow(header, row)).filter((debt): debt is Debt => Boolean(debt));
       const existingKeys = new Set(state.debts.map(debtKey));
       const imported = parsed.filter((debt) => {
@@ -493,6 +733,7 @@ export function App() {
       const nextState = coerceFinanceState(parsed);
 
       setState(nextState);
+      setImportSummary("Backup restored.");
     } catch {
       window.alert("The selected backup file could not be read.");
     } finally {
@@ -511,17 +752,21 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand">
-          <p className="eyebrow">Local finance</p>
-          <h1>Money Manager</h1>
-        </div>
         <nav className="tabs primary-tabs" aria-label="Primary">
           <TabButton icon={<CalendarRange size={18} />} label="Past" tab="past" active={activeSection} onClick={setActiveSection} />
           <TabButton icon={<LayoutDashboard size={18} />} label="Current Month" tab="current" active={activeSection} onClick={setActiveSection} />
           <TabButton icon={<Forward size={18} />} label="Future" tab="future" active={activeSection} onClick={setActiveSection} />
         </nav>
         <nav className="tabs settings-tab" aria-label="Settings">
-          <TabButton icon={<Settings size={18} />} label="Settings" tab="settings" active={activeSection} onClick={setActiveSection} badge={healthIssues.length} />
+          <TabButton
+            icon={<Settings size={18} />}
+            iconOnly
+            label="Settings"
+            tab="settings"
+            active={activeSection}
+            onClick={setActiveSection}
+            badge={healthIssues.length}
+          />
         </nav>
       </header>
 
@@ -531,9 +776,12 @@ export function App() {
             <nav className="subnav" aria-label="Current month sections">
               <TabButton icon={<LayoutDashboard size={16} />} label="Overview" tab="overview" active={currentSub} onClick={setCurrentSub} />
               <TabButton icon={<ReceiptText size={16} />} label="Transactions" tab="transactions" active={currentSub} onClick={setCurrentSub} />
+              <TabButton icon={<BarChart3 size={16} />} label="Budgets" tab="budgets" active={currentSub} onClick={setCurrentSub} />
+              <TabButton icon={<Tags size={16} />} label="Categories" tab="categories" active={currentSub} onClick={setCurrentSub} />
             </nav>
             {currentSub === "overview" && (
               <Dashboard
+                budgetProgress={budgetProgress}
                 savingsAccounts={state.savingsAccounts}
                 debts={state.debts}
                 currentMonthReport={currentMonthReport}
@@ -550,6 +798,24 @@ export function App() {
                 onRemove={removeTransaction}
                 onUpdate={updateTransaction}
                 suggestions={suggestions}
+              />
+            )}
+            {currentSub === "budgets" && (
+              <BudgetsView
+                budgetProgress={budgetProgress}
+                budgets={state.budgets}
+                onAdd={addBudget}
+                onRemove={removeBudget}
+                onUpdate={updateBudget}
+                suggestions={suggestions}
+              />
+            )}
+            {currentSub === "categories" && (
+              <CategoriesView
+                categories={state.categories}
+                onAdd={addCategory}
+                onRemove={removeCategory}
+                onUpdate={updateCategory}
               />
             )}
           </>
@@ -569,9 +835,12 @@ export function App() {
           <FutureView
             forecast={forecast}
             onAdd={addRecurringPayment}
+            onPostDebt={postDebtPayment}
+            onPost={postRecurringPayment}
             onRemove={removeRecurringPayment}
             onUpdate={updateRecurringPayment}
             recurringPayments={state.recurringPayments}
+            suggestions={suggestions}
           />
         )}
 
@@ -582,6 +851,7 @@ export function App() {
               <TabButton icon={<Scale size={16} />} label="Debts" tab="debts" active={settingsSub} onClick={setSettingsSub} />
               <TabButton icon={<Download size={16} />} label="Backup" tab="backup" active={settingsSub} onClick={setSettingsSub} />
               <TabButton icon={<AlertTriangle size={16} />} label="Health" tab="health" active={settingsSub} onClick={setSettingsSub} badge={healthIssues.length} />
+              <TabButton icon={<Smartphone size={16} />} label="Install" tab="install" active={settingsSub} onClick={setSettingsSub} />
             </nav>
             {settingsSub === "savings" && (
               <SavingsView
@@ -592,7 +862,7 @@ export function App() {
               />
             )}
             {settingsSub === "debts" && (
-              <DebtsView debts={state.debts} onAdd={addDebt} onRemove={removeDebt} onUpdate={updateDebt} />
+              <DebtsView debts={state.debts} onAdd={addDebt} onPostPayment={postDebtPayment} onRemove={removeDebt} onUpdate={updateDebt} />
             )}
             {settingsSub === "backup" && (
               <BackupView
@@ -606,7 +876,16 @@ export function App() {
                 state={state}
               />
             )}
-            {settingsSub === "health" && <HealthView issues={healthIssues} state={state} />}
+            {settingsSub === "health" && <HealthView issues={healthIssues} onNavigate={navigate} state={state} />}
+            {settingsSub === "install" && (
+              <InstallView
+                canInstall={Boolean(installPrompt)}
+                isOnline={isOnline}
+                isStandalone={isStandalone}
+                onInstall={installApp}
+                serviceWorkerReady={serviceWorkerReady}
+              />
+            )}
           </>
         )}
       </section>
@@ -618,6 +897,7 @@ function TabButton<T extends string>({
   active,
   badge,
   icon,
+  iconOnly = false,
   label,
   onClick,
   tab,
@@ -625,20 +905,28 @@ function TabButton<T extends string>({
   active: T;
   badge?: number;
   icon: React.ReactNode;
+  iconOnly?: boolean;
   label: string;
   onClick: (tab: T) => void;
   tab: T;
 }) {
   return (
-    <button className={active === tab ? "tab active" : "tab"} onClick={() => onClick(tab)} type="button">
+    <button
+      aria-label={iconOnly ? label : undefined}
+      aria-pressed={active === tab}
+      className={`${active === tab ? "tab active" : "tab"}${iconOnly ? " icon-only" : ""}`}
+      onClick={() => onClick(tab)}
+      type="button"
+    >
       {icon}
-      <span>{label}</span>
+      {!iconOnly ? <span>{label}</span> : null}
       {badge ? <span className="tab-badge">{badge}</span> : null}
     </button>
   );
 }
 
 function Dashboard({
+  budgetProgress,
   currentMonthReport,
   debts,
   healthIssues,
@@ -647,6 +935,7 @@ function Dashboard({
   totals,
   transactions,
 }: {
+  budgetProgress: BudgetProgress[];
   currentMonthReport: ReportData;
   debts: Debt[];
   healthIssues: HealthIssue[];
@@ -699,7 +988,12 @@ function Dashboard({
     },
   ];
   const setupComplete = setupItems.every((item) => item.done);
-  const isFirstRun = savingsAccounts.length === 0 && debts.length === 0 && transactions.length === 0;
+  const isFirstRun = savingsAccounts.length === 0 && debts.length === 0 && transactions.length === 0 && budgetProgress.length === 0;
+  const overBudgetCount = budgetProgress.filter((item) => item.status === "over").length;
+  const nearBudgetCount = budgetProgress.filter((item) => item.status === "near").length;
+  const averageBudgetUsed = budgetProgress.length
+    ? Math.round(budgetProgress.reduce((sum, item) => sum + item.percentUsed, 0) / budgetProgress.length)
+    : 0;
 
   if (isFirstRun) {
     return <Welcome onNavigate={onNavigate} />;
@@ -713,7 +1007,11 @@ function Dashboard({
         <Metric label="Total saved" value={formatCurrency(totals.totalSavings)} tone="positive" />
         <Metric label="Total debt" value={formatCurrency(totals.totalDebt)} tone="negative" />
         <Metric label="Net position" value={formatCurrency(totals.netPosition)} tone={totals.netPosition >= 0 ? "positive" : "negative"} />
-        <Metric label="Health issues" value={healthIssues.length.toString()} tone={healthIssues.length ? "negative" : "positive"} />
+        <Metric
+          label="Budget pressure"
+          value={budgetProgress.length ? `${averageBudgetUsed}% used` : "No budgets"}
+          tone={overBudgetCount ? "negative" : nearBudgetCount ? "neutral" : "positive"}
+        />
       </div>
 
       <section className="stack compact-stack">
@@ -780,11 +1078,17 @@ function Dashboard({
               <XAxis dataKey="name" />
               <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
               <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-              <Bar dataKey="value" fill="#dc2626" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                {currentMonthReport.categoryExpenses.map((category) => (
+                  <Cell key={category.name} fill={category.color} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartPanel>
       </div>
+
+      <BudgetSummary progress={budgetProgress} onNavigate={onNavigate} />
 
       <ChartPanel title="Lifetime transaction totals" empty={transactions.length === 0}>
         <ResponsiveContainer width="100%" height={260}>
@@ -798,6 +1102,58 @@ function Dashboard({
         </ResponsiveContainer>
       </ChartPanel>
     </div>
+  );
+}
+
+function BudgetSummary({ onNavigate, progress }: { onNavigate: NavigateFn; progress: BudgetProgress[] }) {
+  if (!progress.length) {
+    return (
+      <section className="panel action-panel">
+        <div className="panel-title">
+          <BarChart3 size={18} />
+          <h3>Budgets</h3>
+        </div>
+        <p className="panel-copy">Set category limits to see how this month is tracking before expenses surprise you.</p>
+        <button className="secondary-button" onClick={() => onNavigate("current", "budgets")} type="button">
+          Create budgets
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel action-panel">
+      <div className="section-subtitle">
+        <h3>Budget progress</h3>
+        <button className="secondary-button" onClick={() => onNavigate("current", "budgets")} type="button">
+          Manage
+        </button>
+      </div>
+      <div className="budget-list">
+        {progress.slice(0, 4).map((item) => (
+          <BudgetProgressItem item={item} key={item.budget.id} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function BudgetProgressItem({ item }: { item: BudgetProgress }) {
+  const cappedPercent = Math.min(item.percentUsed, 100);
+  return (
+    <article className={`budget-item ${item.status}`}>
+      <div className="budget-item-header">
+        <strong>{item.budget.category}</strong>
+        <span>{item.percentUsed}%</span>
+      </div>
+      <div className="budget-bar" aria-label={`${item.budget.category} budget progress`}>
+        <span style={{ width: `${cappedPercent}%` }} />
+      </div>
+      <div className="budget-item-footer">
+        <span>{formatCurrency(item.spent)} spent</span>
+        <span>{item.remaining >= 0 ? `${formatCurrency(item.remaining)} left` : `${formatCurrency(Math.abs(item.remaining))} over`}</span>
+      </div>
+    </article>
   );
 }
 
@@ -892,6 +1248,109 @@ function Welcome({ onNavigate }: { onNavigate: NavigateFn }) {
   );
 }
 
+function BudgetsView({
+  budgetProgress,
+  budgets,
+  onAdd,
+  onRemove,
+  onUpdate,
+  suggestions,
+}: {
+  budgetProgress: BudgetProgress[];
+  budgets: Budget[];
+  onAdd: (event: FormEvent<HTMLFormElement>) => void;
+  onRemove: (id: string) => void;
+  onUpdate: (id: string, patch: Partial<Budget>) => void;
+  suggestions: {
+    categories: string[];
+    descriptions: string[];
+    subcategories: string[];
+  };
+}) {
+  return (
+    <div className="stack">
+      <Header eyebrow="Phase 2" title="Budgets" subtitle="Set monthly category limits and watch current-month progress." />
+      <form className="entry-form" onSubmit={onAdd}>
+        <label>
+          Category
+          <input list="budget-category-options" name="category" placeholder="Personal" required />
+        </label>
+        <label>
+          Monthly limit
+          <input name="monthlyLimit" inputMode="decimal" placeholder="700000" required />
+        </label>
+        <button className="primary-button" type="submit">
+          <Plus size={18} />
+          Save budget
+        </button>
+        <Datalist id="budget-category-options" options={suggestions.categories} />
+      </form>
+
+      <section className="panel action-panel">
+        <div className="panel-title">
+          <BarChart3 size={18} />
+          <h3>This month</h3>
+        </div>
+        {budgetProgress.length ? (
+          <div className="budget-list">
+            {budgetProgress.map((item) => (
+              <BudgetProgressItem item={item} key={item.budget.id} />
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">Create a budget to track spending against it.</div>
+        )}
+      </section>
+
+      <BudgetsTable budgets={budgets} onRemove={onRemove} onUpdate={onUpdate} />
+    </div>
+  );
+}
+
+function CategoriesView({
+  categories,
+  onAdd,
+  onRemove,
+  onUpdate,
+}: {
+  categories: Category[];
+  onAdd: (event: FormEvent<HTMLFormElement>) => void;
+  onRemove: (id: string) => void;
+  onUpdate: (id: string, patch: Partial<Category>) => void;
+}) {
+  return (
+    <div className="stack">
+      <Header eyebrow="Phase 2" title="Categories" subtitle="Keep clean names for budgets, reports, and automation later." />
+      <form className="entry-form category-form" onSubmit={onAdd}>
+        <label>
+          Name
+          <input name="name" placeholder="Personal" required />
+        </label>
+        <label>
+          Type
+          <select name="type">
+            {transactionTypes.map((type) => (
+              <option key={type}>{type}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Color
+          <span className="color-field">
+            <input aria-label="Category color" className="color-input" defaultValue="#D4AF37" name="color" type="color" />
+          </span>
+        </label>
+        <button className="primary-button" type="submit">
+          <Plus size={18} />
+          Save category
+        </button>
+      </form>
+
+      <CategoriesTable categories={categories} onRemove={onRemove} onUpdate={onUpdate} />
+    </div>
+  );
+}
+
 function SavingsView({
   accounts,
   onAdd,
@@ -928,11 +1387,13 @@ function SavingsView({
 function DebtsView({
   debts,
   onAdd,
+  onPostPayment,
   onRemove,
   onUpdate,
 }: {
   debts: Debt[];
   onAdd: (event: FormEvent<HTMLFormElement>) => void;
+  onPostPayment: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, patch: Partial<Debt>) => void;
 }) {
@@ -965,7 +1426,7 @@ function DebtsView({
           Add debt
         </button>
       </form>
-      <DebtsTable debts={debts} onRemove={onRemove} onUpdate={onUpdate} />
+      <DebtsTable debts={debts} onPostPayment={onPostPayment} onRemove={onRemove} onUpdate={onUpdate} />
     </div>
   );
 }
@@ -987,6 +1448,16 @@ function TransactionsView({
   };
   transactions: Transaction[];
 }) {
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<TransactionType | "all">("all");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [transactionSort, setTransactionSort] = useState<TransactionSort>("date-desc");
+  const filteredTransactions = useMemo(
+    () => sortTransactions(filterTransactions(transactions, { category: categoryFilter, search, type: typeFilter }), transactionSort),
+    [categoryFilter, search, transactions, transactionSort, typeFilter],
+  );
+  const filteredTotals = useMemo(() => buildTransactionTotals(filteredTransactions), [filteredTransactions]);
+
   return (
     <div className="stack">
       <Header title="Transactions" subtitle="Your six-column register starts here." />
@@ -1027,7 +1498,64 @@ function TransactionsView({
         <Datalist id="subcategory-options" options={suggestions.subcategories} />
         <Datalist id="description-options" options={suggestions.descriptions} />
       </form>
-      <TransactionsTable transactions={transactions} onRemove={onRemove} onUpdate={onUpdate} />
+
+      <form className="filter-controls">
+        <label>
+          Search
+          <input
+            onChange={(event) => setSearch(event.currentTarget.value)}
+            placeholder="Description, category, amount"
+            value={search}
+          />
+        </label>
+        <label>
+          Type
+          <select onChange={(event) => setTypeFilter(event.currentTarget.value as TransactionType | "all")} value={typeFilter}>
+            <option value="all">All</option>
+            {transactionTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Category
+          <select onChange={(event) => setCategoryFilter(event.currentTarget.value)} value={categoryFilter}>
+            <option value="">All</option>
+            {suggestions.categories.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Sort
+          <select onChange={(event) => setTransactionSort(event.currentTarget.value as TransactionSort)} value={transactionSort}>
+            <option value="date-desc">Newest first</option>
+            <option value="date-asc">Oldest first</option>
+            <option value="amount-desc">Highest amount</option>
+            <option value="amount-asc">Lowest amount</option>
+          </select>
+        </label>
+        <div className="filter-count">
+          {filteredTransactions.length} of {transactions.length}
+        </div>
+      </form>
+
+      <div className="metric-grid">
+        <Metric label="Visible income" value={formatCurrency(filteredTotals.income)} tone="positive" />
+        <Metric label="Visible expenses" value={formatCurrency(filteredTotals.expenses)} tone="negative" />
+        <Metric label="Visible savings" value={formatCurrency(filteredTotals.savings)} tone="neutral" />
+        <Metric
+          label="Visible net"
+          value={formatCurrency(filteredTotals.netFlow)}
+          tone={filteredTotals.netFlow >= 0 ? "positive" : "negative"}
+        />
+      </div>
+
+      <TransactionsTable transactions={filteredTransactions} onRemove={onRemove} onUpdate={onUpdate} />
     </div>
   );
 }
@@ -1053,7 +1581,7 @@ function ReportsView({
 
   return (
     <div className="stack">
-      <Header title="Reports" subtitle="Review past movement by month, bimester, trimester, quarter, semester, or year." />
+      <Header eyebrow={null} title="Reports" />
       <form className="report-controls">
         <label>
           Period
@@ -1084,6 +1612,21 @@ function ReportsView({
       </div>
 
       <div className="chart-grid">
+        <ChartPanel title="Monthly trend" empty={report.filteredTransactions.length === 0}>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={report.monthlyTrend}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="month" />
+              <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
+              <Tooltip formatter={(value) => formatCurrency(Number(value))} />
+              <Legend />
+              <Bar dataKey="income" fill={chartColors[1]} name="Income" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="expenses" fill={chartColors[2]} name="Expenses" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="savings" fill={chartColors[3]} name="Savings" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="netFlow" fill={chartColors[0]} name="Net flow" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartPanel>
         <ChartPanel title="Flow totals" empty={report.filteredTransactions.length === 0}>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={flowData}>
@@ -1102,7 +1645,11 @@ function ReportsView({
               <XAxis dataKey="name" />
               <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
               <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-              <Bar dataKey="value" fill="#dc2626" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                {report.categoryExpenses.map((category) => (
+                  <Cell key={category.name} fill={category.color} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartPanel>
@@ -1122,15 +1669,25 @@ function ReportsView({
 function FutureView({
   forecast,
   onAdd,
+  onPostDebt,
+  onPost,
   onRemove,
   onUpdate,
   recurringPayments,
+  suggestions,
 }: {
   forecast: ForecastData;
   onAdd: (event: FormEvent<HTMLFormElement>) => void;
+  onPostDebt: (id: string) => void;
+  onPost: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, patch: Partial<RecurringPayment>) => void;
   recurringPayments: RecurringPayment[];
+  suggestions: {
+    categories: string[];
+    descriptions: string[];
+    subcategories: string[];
+  };
 }) {
   const forecastData = [
     { name: "Starting", value: forecast.startingSavings },
@@ -1143,7 +1700,7 @@ function FutureView({
 
   return (
     <div className="stack">
-      <Header title="Future" subtitle="Track recurring expected money movements for a simple monthly forecast." />
+      <Header eyebrow={null} title="Future" />
       <div className="metric-grid">
         <Metric label="Starting savings" value={formatCurrency(forecast.startingSavings)} tone="positive" />
         <Metric label="Expected income" value={formatCurrency(forecast.recurringIncome)} tone="positive" />
@@ -1154,6 +1711,14 @@ function FutureView({
           tone={forecast.projectedEndBalance >= 0 ? "positive" : "negative"}
         />
       </div>
+
+      <section className="panel">
+        <div className="panel-title">
+          <CalendarRange size={18} />
+          <h3>This month's due list</h3>
+        </div>
+        <UpcomingPaymentsTable onPostDebt={onPostDebt} onPostRecurring={onPost} payments={forecast.upcomingPayments} />
+      </section>
 
       <form className="entry-form recurring-form" onSubmit={onAdd}>
         <label>
@@ -1170,7 +1735,7 @@ function FutureView({
         </label>
         <label>
           Category
-          <input name="category" placeholder="Fixed expense" required />
+          <input list="recurring-category-options" name="category" placeholder="Fixed expense" required />
         </label>
         <label>
           Amount
@@ -1184,6 +1749,7 @@ function FutureView({
           <Plus size={18} />
           Add recurring
         </button>
+        <Datalist id="recurring-category-options" options={suggestions.categories} />
       </form>
 
       <ChartPanel title="Monthly forecast" empty={forecast.activePayments.length === 0 && forecast.debtPayments === 0}>
@@ -1198,14 +1764,43 @@ function FutureView({
         </ResponsiveContainer>
       </ChartPanel>
 
-      <RecurringPaymentsTable payments={recurringPayments} onRemove={onRemove} onUpdate={onUpdate} />
+      <ChartPanel title="Projected balance" empty={forecast.monthlyProjection.length === 0}>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={forecast.monthlyProjection}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="month" />
+            <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
+            <Tooltip formatter={(value) => formatCurrency(Number(value))} />
+            <Bar dataKey="projectedEndBalance" fill={chartColors[1]} name="Projected end" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartPanel>
+
+      <section className="panel">
+        <div className="panel-title">
+          <Forward size={18} />
+          <h3>Projection by month</h3>
+        </div>
+        <ForecastProjectionTable projection={forecast.monthlyProjection} />
+      </section>
+
+      <RecurringPaymentsTable payments={recurringPayments} onPost={onPost} onRemove={onRemove} onUpdate={onUpdate} />
     </div>
   );
 }
 
-function HealthView({ issues, state }: { issues: HealthIssue[]; state: FinanceState }) {
+function HealthView({ issues, onNavigate, state }: { issues: HealthIssue[]; onNavigate: NavigateFn; state: FinanceState }) {
   const warnings = issues.filter((issue) => issue.severity === "warning").length;
   const info = issues.filter((issue) => issue.severity === "info").length;
+  const issueTarget = (issue: HealthIssue): [Section, CurrentSub | SettingsSub] => {
+    if (issue.id.startsWith("transaction-")) return ["current", "transactions"];
+    if (issue.id.startsWith("budget-")) return ["current", "budgets"];
+    if (issue.id.startsWith("category-")) return ["current", "categories"];
+    if (issue.id.startsWith("saving-")) return ["settings", "savings"];
+    if (issue.id.startsWith("debt-")) return ["settings", "debts"];
+    if (issue.id.startsWith("recurring-")) return ["future", "overview"];
+    return ["settings", "health"];
+  };
 
   return (
     <div className="stack">
@@ -1230,11 +1825,58 @@ function HealthView({ issues, state }: { issues: HealthIssue[]; state: FinanceSt
                   <strong>{issue.title}</strong>
                   <span>{issue.detail}</span>
                 </div>
+                <button className="secondary-button compact-action" onClick={() => onNavigate(...issueTarget(issue))} type="button">
+                  Review
+                </button>
               </article>
             ))}
           </div>
         ) : (
           <div className="empty-state">No data health issues found.</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function InstallView({
+  canInstall,
+  isOnline,
+  isStandalone,
+  onInstall,
+  serviceWorkerReady,
+}: {
+  canInstall: boolean;
+  isOnline: boolean;
+  isStandalone: boolean;
+  onInstall: () => Promise<void>;
+  serviceWorkerReady: boolean;
+}) {
+  return (
+    <div className="stack">
+      <Header eyebrow="Phase 2" title="Install" subtitle="Phone app status for this device." />
+      <div className="metric-grid">
+        <Metric label="App mode" value={isStandalone ? "Installed" : "Browser"} tone={isStandalone ? "positive" : "neutral"} />
+        <Metric label="Network" value={isOnline ? "Online" : "Offline"} tone={isOnline ? "positive" : "neutral"} />
+        <Metric label="Offline shell" value={serviceWorkerReady ? "Ready" : "Preparing"} tone={serviceWorkerReady ? "positive" : "neutral"} />
+        <Metric label="Storage" value="Local" tone="positive" />
+      </div>
+
+      <section className="panel action-panel">
+        <div className="panel-title">
+          <Smartphone size={18} />
+          <h3>Phone install</h3>
+        </div>
+        {canInstall && !isStandalone ? (
+          <button className="primary-button" onClick={onInstall} type="button">
+            <Smartphone size={18} />
+            Install app
+          </button>
+        ) : (
+          <button className="secondary-button" disabled type="button">
+            <CheckCircle2 size={18} />
+            {isStandalone ? "Installed" : "Install from browser menu"}
+          </button>
         )}
       </section>
     </div>
@@ -1277,6 +1919,12 @@ function BackupView({
             <button className="secondary-button" onClick={() => onCsvExport("transactions")} type="button">
               Transactions CSV
             </button>
+            <button className="secondary-button" onClick={() => onCsvExport("budgets")} type="button">
+              Budgets CSV
+            </button>
+            <button className="secondary-button" onClick={() => onCsvExport("categories")} type="button">
+              Categories CSV
+            </button>
             <button className="secondary-button" onClick={() => onCsvExport("savings")} type="button">
               Savings CSV
             </button>
@@ -1302,6 +1950,14 @@ function BackupView({
             <label className="file-button compact">
               Transactions CSV
               <input accept=".csv,text/csv" onChange={(event) => onCsvImport(event, "transactions")} type="file" />
+            </label>
+            <label className="file-button compact">
+              Budgets CSV
+              <input accept=".csv,text/csv" onChange={(event) => onCsvImport(event, "budgets")} type="file" />
+            </label>
+            <label className="file-button compact">
+              Categories CSV
+              <input accept=".csv,text/csv" onChange={(event) => onCsvImport(event, "categories")} type="file" />
             </label>
             <label className="file-button compact">
               Savings CSV
@@ -1337,6 +1993,8 @@ function BackupView({
         <Metric label="Savings banks" value={state.savingsAccounts.length.toString()} tone="neutral" />
         <Metric label="Debts" value={state.debts.length.toString()} tone="negative" />
         <Metric label="Transactions" value={state.transactions.length.toString()} tone="positive" />
+        <Metric label="Budgets" value={state.budgets.length.toString()} tone="neutral" />
+        <Metric label="Categories" value={state.categories.length.toString()} tone="neutral" />
       </div>
     </div>
   );
@@ -1354,12 +2012,12 @@ function Datalist({ id, options }: { id: string; options: string[] }) {
   );
 }
 
-function Header({ subtitle, title }: { subtitle: string; title: string }) {
+function Header({ eyebrow = "Phase 1", subtitle, title }: { eyebrow?: string | null; subtitle?: string; title: string }) {
   return (
     <header className="section-header">
-      <p className="eyebrow">Phase 1</p>
+      {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
       <h2>{title}</h2>
-      <p>{subtitle}</p>
+      {subtitle ? <p>{subtitle}</p> : null}
     </header>
   );
 }
@@ -1382,6 +2040,116 @@ function ChartPanel({ children, empty, title }: { children: React.ReactNode; emp
       </div>
       {empty ? <div className="empty-state">Add records to see this chart.</div> : children}
     </section>
+  );
+}
+
+function BudgetsTable({
+  budgets,
+  onRemove,
+  onUpdate,
+}: {
+  budgets: Budget[];
+  onRemove: (id: string) => void;
+  onUpdate: (id: string, patch: Partial<Budget>) => void;
+}) {
+  if (!budgets.length) return <EmptyTable message="No budgets yet." />;
+  return (
+    <DataTable>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Monthly limit</th>
+          <th aria-label="Actions" />
+        </tr>
+      </thead>
+      <tbody>
+        {budgets.map((budget) => (
+          <tr key={budget.id}>
+            <td>
+              <input
+                className="table-input"
+                defaultValue={budget.category}
+                onBlur={(event) => onUpdate(budget.id, { category: normalizeLabel(event.currentTarget.value) || budget.category })}
+              />
+            </td>
+            <td>
+              <input
+                className="table-input number"
+                defaultValue={budget.monthlyLimit}
+                inputMode="decimal"
+                onBlur={(event) => onUpdate(budget.id, { monthlyLimit: toNumber(event.currentTarget.value) })}
+              />
+            </td>
+            <td>
+              <IconButton label="Delete budget" onClick={() => onRemove(budget.id)} />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </DataTable>
+  );
+}
+
+function CategoriesTable({
+  categories,
+  onRemove,
+  onUpdate,
+}: {
+  categories: Category[];
+  onRemove: (id: string) => void;
+  onUpdate: (id: string, patch: Partial<Category>) => void;
+}) {
+  if (!categories.length) return <EmptyTable message="No categories yet." />;
+  return (
+    <DataTable>
+      <thead>
+        <tr>
+          <th>Color</th>
+          <th>Name</th>
+          <th>Type</th>
+          <th aria-label="Actions" />
+        </tr>
+      </thead>
+      <tbody>
+        {categories.map((category) => (
+          <tr key={category.id}>
+            <td>
+              <span className="color-cell">
+                <span className="color-swatch" style={{ backgroundColor: category.color }} />
+                <input
+                  aria-label={`${category.name} color`}
+                  className="color-input table-color-input"
+                  defaultValue={category.color}
+                  onChange={(event) => onUpdate(category.id, { color: event.currentTarget.value })}
+                  type="color"
+                />
+              </span>
+            </td>
+            <td>
+              <input
+                className="table-input"
+                defaultValue={category.name}
+                onBlur={(event) => onUpdate(category.id, { name: normalizeLabel(event.currentTarget.value) || category.name })}
+              />
+            </td>
+            <td>
+              <select
+                className="table-input"
+                defaultValue={category.type}
+                onChange={(event) => onUpdate(category.id, { type: event.currentTarget.value as TransactionType })}
+              >
+                {transactionTypes.map((type) => (
+                  <option key={type}>{type}</option>
+                ))}
+              </select>
+            </td>
+            <td>
+              <IconButton label="Delete category" onClick={() => onRemove(category.id)} />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </DataTable>
   );
 }
 
@@ -1434,10 +2202,12 @@ function SavingsTable({
 
 function DebtsTable({
   debts,
+  onPostPayment,
   onRemove,
   onUpdate,
 }: {
   debts: Debt[];
+  onPostPayment: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, patch: Partial<Debt>) => void;
 }) {
@@ -1496,7 +2266,10 @@ function DebtsTable({
               />
             </td>
             <td>
-              <IconButton label="Delete debt" onClick={() => onRemove(debt.id)} />
+              <div className="table-actions">
+                <PostButton disabled={debt.monthlyPayment <= 0 || debt.currentBalance <= 0} label="Post debt payment" onClick={() => onPostPayment(debt.id)} />
+                <IconButton label="Delete debt" onClick={() => onRemove(debt.id)} />
+              </div>
             </td>
           </tr>
         ))}
@@ -1626,11 +2399,86 @@ function ReportTransactionsTable({ transactions }: { transactions: Transaction[]
   );
 }
 
+function ForecastProjectionTable({ projection }: { projection: ForecastData["monthlyProjection"] }) {
+  if (!projection.length) return <EmptyTable message="No projection yet." />;
+
+  return (
+    <DataTable>
+      <thead>
+        <tr>
+          <th>Month</th>
+          <th>Start</th>
+          <th>Income</th>
+          <th>Outflow</th>
+          <th>Projected end</th>
+        </tr>
+      </thead>
+      <tbody>
+        {projection.map((row) => (
+          <tr key={row.month}>
+            <td>{row.month}</td>
+            <td>{formatCurrency(row.startingBalance)}</td>
+            <td>{formatCurrency(row.income)}</td>
+            <td>{formatCurrency(row.expenses + row.savings + row.debtPayments)}</td>
+            <td>{formatCurrency(row.projectedEndBalance)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </DataTable>
+  );
+}
+
+function UpcomingPaymentsTable({
+  onPostDebt,
+  onPostRecurring,
+  payments,
+}: {
+  onPostDebt: (id: string) => void;
+  onPostRecurring: (id: string) => void;
+  payments: ForecastData["upcomingPayments"];
+}) {
+  if (!payments.length) return <EmptyTable message="No upcoming payments yet." />;
+
+  return (
+    <DataTable>
+      <thead>
+        <tr>
+          <th>Due</th>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Category</th>
+          <th>Amount</th>
+          <th aria-label="Actions" />
+        </tr>
+      </thead>
+      <tbody>
+        {payments.map((payment) => (
+          <tr key={payment.id}>
+            <td>{payment.dueDate || "-"}</td>
+            <td>{payment.name}</td>
+            <td>{payment.type}</td>
+            <td>{payment.category}</td>
+            <td>{formatCurrency(payment.amount)}</td>
+            <td>
+              <PostButton
+                label={payment.kind === "debt" ? "Post debt payment" : "Post recurring payment"}
+                onClick={() => (payment.kind === "debt" ? onPostDebt(payment.sourceId) : onPostRecurring(payment.sourceId))}
+              />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </DataTable>
+  );
+}
+
 function RecurringPaymentsTable({
+  onPost,
   onRemove,
   onUpdate,
   payments,
 }: {
+  onPost: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, patch: Partial<RecurringPayment>) => void;
   payments: RecurringPayment[];
@@ -1705,7 +2553,10 @@ function RecurringPaymentsTable({
               />
             </td>
             <td>
-              <IconButton label="Delete recurring payment" onClick={() => onRemove(payment.id)} />
+              <div className="table-actions">
+                <PostButton label="Post as transaction" onClick={() => onPost(payment.id)} />
+                <IconButton label="Delete recurring payment" onClick={() => onRemove(payment.id)} />
+              </div>
             </td>
           </tr>
         ))}
@@ -1726,6 +2577,14 @@ function IconButton({ label, onClick }: { label: string; onClick: () => void }) 
   return (
     <button aria-label={label} className="icon-button" onClick={onClick} title={label} type="button">
       <Trash2 size={16} />
+    </button>
+  );
+}
+
+function PostButton({ disabled = false, label, onClick }: { disabled?: boolean; label: string; onClick: () => void }) {
+  return (
+    <button aria-label={label} className="icon-button post-button" disabled={disabled} onClick={onClick} title={label} type="button">
+      <Plus size={16} />
     </button>
   );
 }

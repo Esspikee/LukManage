@@ -35,7 +35,22 @@ export type RecurringPayment = {
   active: boolean;
 };
 
+export type Budget = {
+  id: string;
+  category: string;
+  monthlyLimit: number;
+};
+
+export type Category = {
+  id: string;
+  name: string;
+  type: TransactionType;
+  color: string;
+};
+
 export type FinanceState = {
+  budgets: Budget[];
+  categories: Category[];
   recurringPayments: RecurringPayment[];
   savingsAccounts: SavingsAccount[];
   debts: Debt[];

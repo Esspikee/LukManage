@@ -4,6 +4,8 @@ import type { FinanceState } from "./types";
 
 function fullState(): FinanceState {
   return {
+    budgets: [],
+    categories: [],
     recurringPayments: [],
     savingsAccounts: [{ id: "s", bankName: "Lulo", balance: 100 }],
     debts: [],
@@ -29,6 +31,8 @@ describe("migrate", () => {
     // not crash the app; every collection should default to [].
     const result = migrate({ schemaVersion: CURRENT_SCHEMA_VERSION, state: {} as FinanceState });
     expect(result.state).toEqual({
+      budgets: [],
+      categories: [],
       recurringPayments: [],
       savingsAccounts: [],
       debts: [],

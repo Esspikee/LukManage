@@ -1,14 +1,21 @@
 import { formatCurrency, normalizeLabel, toNumber, todayIso } from "./format";
-import { createDebt, createRecurringPayment, createSavingsAccount, createTransaction } from "./storage";
-import type { Debt, FinanceState, RecurringPayment, SavingsAccount, Transaction, TransactionType } from "./types";
+import { createBudget, createCategory, createDebt, createRecurringPayment, createSavingsAccount, createTransaction } from "./storage";
+import type { Budget, Category, Debt, FinanceState, RecurringPayment, SavingsAccount, Transaction, TransactionType } from "./types";
 
 export type HealthSeverity = "warning" | "info";
 export type ReportPeriod = "month" | "bimester" | "trimester" | "quarter" | "semester" | "year";
 
 export type ReportData = {
-  categoryExpenses: Array<{ name: string; value: number }>;
+  categoryExpenses: Array<{ color: string; name: string; value: number }>;
   filteredTransactions: Transaction[];
   label: string;
+  monthlyTrend: Array<{
+    expenses: number;
+    income: number;
+    month: string;
+    netFlow: number;
+    savings: number;
+  }>;
   totals: {
     expenses: number;
     income: number;
@@ -20,11 +27,55 @@ export type ReportData = {
 export type ForecastData = {
   activePayments: RecurringPayment[];
   debtPayments: number;
+  monthlyProjection: Array<{
+    debtPayments: number;
+    expenses: number;
+    income: number;
+    month: string;
+    projectedEndBalance: number;
+    savings: number;
+    startingBalance: number;
+  }>;
   projectedEndBalance: number;
   recurringExpenses: number;
   recurringIncome: number;
   recurringSavings: number;
   startingSavings: number;
+  upcomingPayments: UpcomingPayment[];
+};
+
+export type UpcomingPayment = {
+  amount: number;
+  category: string;
+  dueDate: string;
+  id: string;
+  kind: "recurring" | "debt";
+  name: string;
+  sourceId: string;
+  type: TransactionType | "Debt";
+};
+
+export type BudgetProgress = {
+  budget: Budget;
+  spent: number;
+  remaining: number;
+  percentUsed: number;
+  status: "under" | "near" | "over";
+};
+
+export type TransactionFilters = {
+  category?: string;
+  search?: string;
+  type?: TransactionType | "all";
+};
+
+export type TransactionSort = "date-desc" | "date-asc" | "amount-desc" | "amount-asc";
+
+export type TransactionTotals = {
+  expenses: number;
+  income: number;
+  netFlow: number;
+  savings: number;
 };
 
 export type HealthIssue = {
@@ -48,6 +99,8 @@ export function coerceFinanceState(input: unknown): FinanceState {
     isRecord(input) && isRecord(input.state) ? input.state : isRecord(input) ? input : {};
 
   return {
+    budgets: Array.isArray(candidate.budgets) ? candidate.budgets : [],
+    categories: Array.isArray(candidate.categories) ? candidate.categories : [],
     recurringPayments: Array.isArray(candidate.recurringPayments) ? candidate.recurringPayments : [],
     savingsAccounts: Array.isArray(candidate.savingsAccounts) ? candidate.savingsAccounts : [],
     debts: Array.isArray(candidate.debts) ? candidate.debts : [],
@@ -57,6 +110,8 @@ export function coerceFinanceState(input: unknown): FinanceState {
 
 export function createEmptyState(): FinanceState {
   return {
+    budgets: [],
+    categories: [],
     recurringPayments: [],
     savingsAccounts: [],
     debts: [],
@@ -71,6 +126,17 @@ export function createSampleState(): FinanceState {
   const previousMonth = previousMonthDate.toISOString().slice(0, 7);
 
   return {
+    budgets: [
+      createBudget({ category: "Personal", monthlyLimit: 700000 }),
+      createBudget({ category: "Transport", monthlyLimit: 250000 }),
+    ],
+    categories: [
+      createCategory({ color: "#D4AF37", name: "Salary", type: "Ingreso" }),
+      createCategory({ color: "#B33030", name: "Personal", type: "Gasto" }),
+      createCategory({ color: "#2A5699", name: "Transport", type: "Gasto" }),
+      createCategory({ color: "#2E7D32", name: "Savings", type: "Ahorro" }),
+      createCategory({ color: "#8C6A1A", name: "Rent", type: "Gasto" }),
+    ],
     savingsAccounts: [
       createSavingsAccount({ bankName: "Lulo Bank", balance: 2800000 }),
       createSavingsAccount({ bankName: "Davivienda", balance: 1200000 }),
@@ -161,7 +227,65 @@ export function uniqueSorted(values: string[]) {
   );
 }
 
-export function buildReport(transactions: Transaction[], selectedMonth: string, period: ReportPeriod): ReportData {
+export function filterTransactions(transactions: Transaction[], filters: TransactionFilters) {
+  const search = normalizeLabel(filters.search ?? "").toLowerCase();
+  const category = normalizeLabel(filters.category ?? "").toLowerCase();
+  const type = filters.type && filters.type !== "all" ? filters.type : "";
+
+  return transactions.filter((transaction) => {
+    if (type && transaction.gastoIngresoAhorro !== type) return false;
+    if (category && normalizeLabel(transaction.categoria).toLowerCase() !== category) return false;
+    if (!search) return true;
+
+    return [
+      transaction.fecha,
+      transaction.gastoIngresoAhorro,
+      transaction.categoria,
+      transaction.subcategoria,
+      transaction.descripcion,
+      String(transaction.monto),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(search);
+  });
+}
+
+export function buildTransactionTotals(transactions: Transaction[]): TransactionTotals {
+  return transactions.reduce(
+    (acc, transaction) => {
+      if (transaction.gastoIngresoAhorro === "Ingreso") acc.income += transaction.monto;
+      if (transaction.gastoIngresoAhorro === "Gasto") acc.expenses += transaction.monto;
+      if (transaction.gastoIngresoAhorro === "Ahorro") acc.savings += transaction.monto;
+      acc.netFlow = acc.income - acc.expenses - acc.savings;
+      return acc;
+    },
+    { expenses: 0, income: 0, netFlow: 0, savings: 0 },
+  );
+}
+
+export function sortTransactions(transactions: Transaction[], sort: TransactionSort) {
+  return [...transactions].sort((a, b) => {
+    if (sort === "amount-desc") return b.monto - a.monto;
+    if (sort === "amount-asc") return a.monto - b.monto;
+
+    const dateComparison = comparableTransactionDate(a.fecha).localeCompare(comparableTransactionDate(b.fecha));
+    return sort === "date-asc" ? dateComparison : -dateComparison;
+  });
+}
+
+function comparableTransactionDate(value: string) {
+  const parsed = transactionDateParts(value);
+  if (!parsed) return normalizeLabel(value);
+  return `${parsed.year}-${String(parsed.month).padStart(2, "0")}-${String(parsed.day).padStart(2, "0")}`;
+}
+
+export function buildReport(
+  transactions: Transaction[],
+  selectedMonth: string,
+  period: ReportPeriod,
+  categories: Category[] = [],
+): ReportData {
   const [year, month] = selectedMonth.split("-").map(Number);
   const length = periodMonthLength(period);
   const startMonth = period === "year" ? 1 : Math.floor(((month || 1) - 1) / length) * length + 1;
@@ -174,16 +298,7 @@ export function buildReport(transactions: Transaction[], selectedMonth: string, 
     })
     .sort((a, b) => a.fecha.localeCompare(b.fecha));
 
-  const totals = filteredTransactions.reduce(
-    (acc, transaction) => {
-      if (transaction.gastoIngresoAhorro === "Ingreso") acc.income += transaction.monto;
-      if (transaction.gastoIngresoAhorro === "Gasto") acc.expenses += transaction.monto;
-      if (transaction.gastoIngresoAhorro === "Ahorro") acc.savings += transaction.monto;
-      acc.netFlow = acc.income - acc.expenses - acc.savings;
-      return acc;
-    },
-    { expenses: 0, income: 0, netFlow: 0, savings: 0 },
-  );
+  const totals = buildTransactionTotals(filteredTransactions);
 
   const expenseByCategory = new Map<string, number>();
   filteredTransactions
@@ -193,16 +308,59 @@ export function buildReport(transactions: Transaction[], selectedMonth: string, 
       expenseByCategory.set(category, (expenseByCategory.get(category) || 0) + transaction.monto);
     });
 
-  const categoryExpenses = Array.from(expenseByCategory, ([name, value]) => ({ name, value })).sort(
+  const categoryColors = buildCategoryColorMap(categories);
+  const categoryExpenses = Array.from(expenseByCategory, ([name, value]) => ({
+    color: categoryColors.get(normalizeLabel(name).toLowerCase()) || "#B33030",
+    name,
+    value,
+  })).sort(
     (a, b) => b.value - a.value,
   );
+  const monthlyTrend = buildMonthlyTrend(filteredTransactions, year, startMonth, endMonth);
 
   return {
     categoryExpenses,
     filteredTransactions,
     label: `${periodLabel(period)} ${year}-${String(startMonth).padStart(2, "0")} to ${year}-${String(endMonth).padStart(2, "0")}`,
+    monthlyTrend,
     totals,
   };
+}
+
+function buildCategoryColorMap(categories: Category[]) {
+  const colors = new Map<string, string>();
+  categories.forEach((category) => {
+    const key = categoryKey(category);
+    const color = normalizeColor(category.color);
+    if (key && color) colors.set(key, color);
+  });
+  return colors;
+}
+
+function buildMonthlyTrend(transactions: Transaction[], year: number, startMonth: number, endMonth: number) {
+  const rows = new Map(
+    Array.from({ length: endMonth - startMonth + 1 }, (_, index) => {
+      const monthNumber = startMonth + index;
+      const month = `${year}-${String(monthNumber).padStart(2, "0")}`;
+      return [month, { expenses: 0, income: 0, month, netFlow: 0, savings: 0 }];
+    }),
+  );
+
+  transactions.forEach((transaction) => {
+    const parsed = transactionDateParts(transaction.fecha);
+    if (!parsed) return;
+
+    const month = `${parsed.year}-${String(parsed.month).padStart(2, "0")}`;
+    const row = rows.get(month);
+    if (!row) return;
+
+    if (transaction.gastoIngresoAhorro === "Ingreso") row.income += transaction.monto;
+    if (transaction.gastoIngresoAhorro === "Gasto") row.expenses += transaction.monto;
+    if (transaction.gastoIngresoAhorro === "Ahorro") row.savings += transaction.monto;
+    row.netFlow = row.income - row.expenses - row.savings;
+  });
+
+  return Array.from(rows.values());
 }
 
 export function periodMonthLength(period: ReportPeriod) {
@@ -258,7 +416,15 @@ export function recurringPaymentKey(payment: RecurringPayment) {
   return normalizeLabel(payment.name).toLowerCase();
 }
 
-export function buildForecast(state: FinanceState): ForecastData {
+export function budgetKey(budget: Budget) {
+  return normalizeLabel(budget.category).toLowerCase();
+}
+
+export function categoryKey(category: Category) {
+  return normalizeLabel(category.name).toLowerCase();
+}
+
+export function buildForecast(state: FinanceState, startMonth = todayIso().slice(0, 7), monthCount = 6): ForecastData {
   const startingSavings = state.savingsAccounts.reduce((sum, account) => sum + account.balance, 0);
   const activePayments = state.recurringPayments.filter((payment) => payment.active);
   const recurringIncome = activePayments
@@ -271,16 +437,137 @@ export function buildForecast(state: FinanceState): ForecastData {
     .filter((payment) => payment.type === "Ahorro")
     .reduce((sum, payment) => sum + payment.amount, 0);
   const debtPayments = state.debts.reduce((sum, debt) => sum + debt.monthlyPayment, 0);
+  const monthlyProjection = buildMonthlyProjection({
+    debtPayments,
+    monthCount,
+    recurringExpenses,
+    recurringIncome,
+    recurringSavings,
+    startMonth,
+    startingSavings,
+  });
+  const upcomingPayments = buildUpcomingPayments(state, startMonth);
 
   return {
     activePayments,
     debtPayments,
-    projectedEndBalance: startingSavings + recurringIncome - recurringExpenses - recurringSavings - debtPayments,
+    monthlyProjection,
+    projectedEndBalance: monthlyProjection[0]?.projectedEndBalance ?? startingSavings,
     recurringExpenses,
     recurringIncome,
     recurringSavings,
     startingSavings,
+    upcomingPayments,
   };
+}
+
+export function buildUpcomingPayments(state: FinanceState, selectedMonth = todayIso().slice(0, 7)): UpcomingPayment[] {
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const maxDay = daysInMonth(year || new Date().getFullYear(), month || 1);
+
+  const recurring = state.recurringPayments
+    .filter((payment) => payment.active && payment.amount > 0)
+    .map((payment) => {
+      const day = Math.min(clampDueDay(payment.dueDay), maxDay);
+      return {
+        amount: payment.amount,
+        category: payment.category,
+        dueDate: `${selectedMonth}-${String(day).padStart(2, "0")}`,
+        id: `recurring-${payment.id}`,
+        kind: "recurring" as const,
+        name: payment.name,
+        sourceId: payment.id,
+        type: payment.type,
+      };
+    });
+
+  const debts = state.debts
+    .filter((debt) => debt.currentBalance > 0 && debt.monthlyPayment > 0)
+    .map((debt) => {
+      const parsed = transactionDateParts(debt.dueDate);
+      const day = parsed ? Math.min(Math.max(1, parsed.day), maxDay) : 0;
+      return {
+        amount: Math.min(debt.monthlyPayment, debt.currentBalance),
+        category: "Debt payment",
+        dueDate: day ? `${selectedMonth}-${String(day).padStart(2, "0")}` : "",
+        id: `debt-${debt.id}`,
+        kind: "debt" as const,
+        name: debt.name,
+        sourceId: debt.id,
+        type: "Debt" as const,
+      };
+    });
+
+  return [...recurring, ...debts].sort((a, b) => {
+    if (!a.dueDate && b.dueDate) return 1;
+    if (a.dueDate && !b.dueDate) return -1;
+    return a.dueDate.localeCompare(b.dueDate) || a.name.localeCompare(b.name);
+  });
+}
+
+function buildMonthlyProjection({
+  debtPayments,
+  monthCount,
+  recurringExpenses,
+  recurringIncome,
+  recurringSavings,
+  startMonth,
+  startingSavings,
+}: {
+  debtPayments: number;
+  monthCount: number;
+  recurringExpenses: number;
+  recurringIncome: number;
+  recurringSavings: number;
+  startMonth: string;
+  startingSavings: number;
+}) {
+  const count = Math.max(1, Math.round(monthCount));
+  let balance = startingSavings;
+
+  return Array.from({ length: count }, (_, index) => {
+    const month = addMonths(startMonth, index);
+    const startingBalance = balance;
+    const projectedEndBalance = startingBalance + recurringIncome - recurringExpenses - recurringSavings - debtPayments;
+    balance = projectedEndBalance;
+
+    return {
+      debtPayments,
+      expenses: recurringExpenses,
+      income: recurringIncome,
+      month,
+      projectedEndBalance,
+      savings: recurringSavings,
+      startingBalance,
+    };
+  });
+}
+
+function addMonths(month: string, offset: number) {
+  const [year = new Date().getFullYear(), monthNumber = 1] = month.split("-").map(Number);
+  const date = new Date(Date.UTC(year, monthNumber - 1 + offset, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function daysInMonth(year: number, month: number) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+export function buildBudgetProgress(transactions: Transaction[], budgets: Budget[], selectedMonth: string): BudgetProgress[] {
+  const report = buildReport(transactions, selectedMonth, "month");
+  const expenses = new Map(report.categoryExpenses.map((item) => [normalizeLabel(item.name).toLowerCase(), item.value]));
+
+  return budgets
+    .filter((budget) => normalizeLabel(budget.category) && budget.monthlyLimit > 0)
+    .map((budget) => {
+      const spent = expenses.get(normalizeLabel(budget.category).toLowerCase()) || 0;
+      const remaining = budget.monthlyLimit - spent;
+      const percentUsed = Math.round((spent / budget.monthlyLimit) * 100);
+      const status: BudgetProgress["status"] = spent > budget.monthlyLimit ? "over" : percentUsed >= 80 ? "near" : "under";
+
+      return { budget, percentUsed, remaining, spent, status };
+    })
+    .sort((a, b) => b.percentUsed - a.percentUsed);
 }
 
 export function buildHealthIssues(state: FinanceState): HealthIssue[] {
@@ -321,6 +608,116 @@ export function buildHealthIssues(state: FinanceState): HealthIssue[] {
       });
     }
   });
+
+  const seenTransactions = new Map<string, string>();
+  state.transactions.forEach((transaction) => {
+    const key = transactionKey(transaction);
+    const firstId = seenTransactions.get(key);
+    if (firstId && firstId !== transaction.id) {
+      issues.push({
+        detail: `${transaction.fecha || "No date"} - ${transaction.descripcion || "No description"}`,
+        id: `transaction-duplicate-${transaction.id}`,
+        severity: "warning",
+        title: "Transaction appears more than once",
+      });
+      return;
+    }
+    seenTransactions.set(key, transaction.id);
+  });
+
+  state.budgets.forEach((budget) => {
+    if (!normalizeLabel(budget.category)) {
+      issues.push({
+        detail: `Limit: ${formatCurrency(budget.monthlyLimit)}`,
+        id: `budget-category-${budget.id}`,
+        severity: "warning",
+        title: "Budget has no category",
+      });
+    }
+    if (budget.monthlyLimit <= 0) {
+      issues.push({
+        detail: normalizeLabel(budget.category) || "Unnamed budget",
+        id: `budget-limit-${budget.id}`,
+        severity: "warning",
+        title: "Budget limit is zero or negative",
+      });
+    }
+  });
+
+  state.categories.forEach((category) => {
+    if (!normalizeLabel(category.name)) {
+      issues.push({
+        detail: category.type,
+        id: `category-name-${category.id}`,
+        severity: "warning",
+        title: "Category has no name",
+      });
+    }
+    if (!normalizeTransactionType(category.type)) {
+      issues.push({
+        detail: normalizeLabel(category.name) || "Unnamed category",
+        id: `category-type-${category.id}`,
+        severity: "warning",
+        title: "Category has an invalid type",
+      });
+    }
+  });
+
+  const seenCategories = new Map<string, string>();
+  state.categories.forEach((category) => {
+    const key = categoryKey(category);
+    if (!key) return;
+    const firstId = seenCategories.get(key);
+    if (firstId && firstId !== category.id) {
+      issues.push({
+        detail: category.name,
+        id: `category-duplicate-${category.id}`,
+        severity: "warning",
+        title: "Category appears more than once",
+      });
+      return;
+    }
+    seenCategories.set(key, category.id);
+  });
+
+  const managedCategoryKeys = new Set(state.categories.map(categoryKey).filter(Boolean));
+  if (managedCategoryKeys.size) {
+    state.transactions.forEach((transaction) => {
+      const key = normalizeLabel(transaction.categoria).toLowerCase();
+      if (key && !managedCategoryKeys.has(key)) {
+        issues.push({
+          detail: transaction.categoria,
+          id: `transaction-unmanaged-category-${transaction.id}`,
+          severity: "info",
+          title: "Transaction category is not managed",
+        });
+      }
+    });
+
+    state.budgets.forEach((budget) => {
+      const key = normalizeLabel(budget.category).toLowerCase();
+      if (key && !managedCategoryKeys.has(key)) {
+        issues.push({
+          detail: budget.category,
+          id: `budget-unmanaged-category-${budget.id}`,
+          severity: "info",
+          title: "Budget category is not managed",
+        });
+      }
+    });
+
+    state.recurringPayments.forEach((payment) => {
+      const key = normalizeLabel(payment.category).toLowerCase();
+      if (key && !managedCategoryKeys.has(key)) {
+        issues.push({
+          detail: payment.category,
+          id: `recurring-unmanaged-category-${payment.id}`,
+          severity: "info",
+          title: "Recurring category is not managed",
+        });
+      }
+    });
+  }
 
   state.savingsAccounts.forEach((account) => {
     if (!normalizeLabel(account.bankName)) {
@@ -395,6 +792,33 @@ export function clampDueDay(value: number) {
   return Math.min(31, Math.max(1, Math.round(value)));
 }
 
+export function transactionFromRecurringPayment(payment: RecurringPayment, fecha = todayIso()): Transaction {
+  return createTransaction({
+    fecha,
+    gastoIngresoAhorro: payment.type,
+    categoria: normalizeLabel(payment.category),
+    subcategoria: "Recurring",
+    descripcion: normalizeLabel(payment.name),
+    monto: payment.amount,
+  });
+}
+
+export function transactionFromDebtPayment(debt: Debt, fecha = todayIso()): Transaction {
+  return createTransaction({
+    fecha,
+    gastoIngresoAhorro: "Gasto",
+    categoria: "Debt payment",
+    subcategoria: normalizeLabel(debt.name),
+    descripcion: `${normalizeLabel(debt.name)} payment`,
+    monto: Math.min(Math.max(0, debt.monthlyPayment), Math.max(0, debt.currentBalance)),
+  });
+}
+
+export function applyDebtPayment(debt: Debt): Debt {
+  const paymentAmount = Math.min(Math.max(0, debt.monthlyPayment), Math.max(0, debt.currentBalance));
+  return { ...debt, currentBalance: Math.max(0, debt.currentBalance - paymentAmount) };
+}
+
 export function parseTransactionRow(header: string[], row: string[]): Transaction | null {
   const fecha = csvValue(header, row, ["fecha", "date"]);
   const tipo = normalizeTransactionType(csvValue(header, row, ["gasto/ingreso/ahorro", "tipo", "type"]));
@@ -447,6 +871,30 @@ export function parseRecurringPaymentRow(header: string[], row: string[]): Recur
   if (!name || !type || !category || !Number.isFinite(amount)) return null;
 
   return createRecurringPayment({ name, type, category, amount, dueDay, active });
+}
+
+export function parseBudgetRow(header: string[], row: string[]): Budget | null {
+  const category = normalizeLabel(csvValue(header, row, ["category", "categoria"]));
+  const monthlyLimit = toNumber(csvValue(header, row, ["monthly_limit", "limit", "budget", "presupuesto", "monto"]));
+
+  if (!category || !Number.isFinite(monthlyLimit)) return null;
+
+  return createBudget({ category, monthlyLimit });
+}
+
+export function parseCategoryRow(header: string[], row: string[]): Category | null {
+  const name = normalizeLabel(csvValue(header, row, ["name", "category", "categoria", "nombre"]));
+  const type = normalizeTransactionType(csvValue(header, row, ["type", "tipo", "gasto/ingreso/ahorro"]));
+  const color = normalizeColor(csvValue(header, row, ["color", "colour"])) || "#D4AF37";
+
+  if (!name || !type) return null;
+
+  return createCategory({ name, type, color });
+}
+
+export function normalizeColor(value: string) {
+  const color = normalizeLabel(value);
+  return /^#[0-9a-f]{6}$/i.test(color) ? color.toUpperCase() : "";
 }
 
 export function csvValue(header: string[], row: string[], aliases: string[]) {
