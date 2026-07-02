@@ -1,9 +1,9 @@
-import type { Budget, Category, Debt, RecurringPayment, SavingsAccount, Transaction } from "./types";
+import type { Budget, CardPayment, Category, Debt, RecurringPayment, SavingsAccount, Transaction } from "./types";
 
 // Persistence (load/save) now lives in ./persistence behind the FinanceRepository
 // interface. This module keeps the pure entity factories and id generation.
 
-export function newId(prefix: "saving" | "debt" | "transaction" | "recurring" | "budget" | "category") {
+export function newId(prefix: "saving" | "debt" | "transaction" | "recurring" | "budget" | "category" | "payment") {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
@@ -29,4 +29,8 @@ export function createBudget(input: Omit<Budget, "id">): Budget {
 
 export function createCategory(input: Omit<Category, "id">): Category {
   return { id: newId("category"), ...input };
+}
+
+export function createCardPayment(input: Omit<CardPayment, "id">): CardPayment {
+  return { id: newId("payment"), ...input };
 }
