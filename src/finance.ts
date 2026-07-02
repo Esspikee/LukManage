@@ -1,6 +1,6 @@
 import { formatCurrency, normalizeLabel, toNumber, todayIso } from "./format";
-import { createBudget, createCategory, createDebt, createRecurringPayment, createSavingsAccount, createTransaction } from "./storage";
-import type { Budget, Category, Debt, FinanceState, RecurringPayment, SavingsAccount, Transaction, TransactionType } from "./types";
+import { createBudget, createCardPayment, createCategory, createDebt, createRecurringPayment, createSavingsAccount, createTransaction } from "./storage";
+import type { Budget, CardPayment, Category, Debt, FinanceState, RecurringPayment, SavingsAccount, Transaction, TransactionType } from "./types";
 
 export type HealthSeverity = "warning" | "info";
 export type ReportPeriod = "month" | "bimester" | "trimester" | "quarter" | "semester" | "year";
@@ -817,6 +817,79 @@ export function transactionFromDebtPayment(debt: Debt, fecha = todayIso()): Tran
 export function applyDebtPayment(debt: Debt): Debt {
   const paymentAmount = Math.min(Math.max(0, debt.monthlyPayment), Math.max(0, debt.currentBalance));
   return { ...debt, currentBalance: Math.max(0, debt.currentBalance - paymentAmount) };
+}
+
+// ---- Credit-card mode --------------------------------------------------------
+// A credit-card debt tracks a floating balance: linked-category expenses accrue
+// onto it and payments pay it down. The balance is DERIVED from transactions +
+// payments (never hand-edited), so it can't drift out of sync.
+
+export type CreditCardStatement = {
+  amountDue: number;
+  closed: boolean;
+  cutoffDate: string;
+};
+
+export function isCreditCard(debt: Debt): debt is Debt & { linkedCategory: string } {
+  return Boolean(debt.isCreditCard && normalizeLabel(debt.linkedCategory ?? ""));
+}
+
+/** Expenses charged to this card: Gasto transactions in the card's linked category. */
+export function creditCardCharges(debt: Debt, transactions: Transaction[]): Transaction[] {
+  const linked = normalizeLabel(debt.linkedCategory ?? "").toLowerCase();
+  if (!linked) return [];
+  return transactions.filter(
+    (transaction) =>
+      transaction.gastoIngresoAhorro === "Gasto" &&
+      normalizeLabel(transaction.categoria).toLowerCase() === linked,
+  );
+}
+
+function sumCardPayments(debt: Debt): number {
+  return (debt.payments ?? []).reduce((sum, payment) => sum + Math.max(0, payment.amount), 0);
+}
+
+/** Live balance owed on the card = charges to date minus payments, floored at 0. */
+export function creditCardBalance(debt: Debt, transactions: Transaction[]): number {
+  const charged = creditCardCharges(debt, transactions).reduce((sum, transaction) => sum + transaction.monto, 0);
+  return Math.max(0, charged - sumCardPayments(debt));
+}
+
+/**
+ * The statement for the most recent cutoff (e.g. the 5th): what accrued on or
+ * before the cutoff, less payments made so far (payments pay the oldest balance
+ * first). `closed` is true once today is past this month's cutoff day.
+ */
+export function creditCardStatement(debt: Debt, transactions: Transaction[], today = todayIso()): CreditCardStatement {
+  const cutoffDay = clampDueDay(debt.cutoffDay ?? 1);
+  const [year, month, day] = today.split("-").map(Number);
+  const closed = (day || 1) >= cutoffDay;
+  const cutoffMonth = closed
+    ? `${year}-${String(month).padStart(2, "0")}`
+    : addMonths(`${year}-${String(month).padStart(2, "0")}`, -1);
+  const cutoffDate = `${cutoffMonth}-${String(cutoffDay).padStart(2, "0")}`;
+
+  const chargedThroughCutoff = creditCardCharges(debt, transactions)
+    .filter((transaction) => comparableTransactionDate(transaction.fecha) <= cutoffDate)
+    .reduce((sum, transaction) => sum + transaction.monto, 0);
+
+  return { amountDue: Math.max(0, chargedThroughCutoff - sumCardPayments(debt)), closed, cutoffDate };
+}
+
+/** Records a card payment (pure). Does not create an expense — it clears liability. */
+export function applyCreditCardPayment(
+  debt: Debt,
+  amount: number,
+  date = todayIso(),
+  fromAccountId?: string,
+): { debt: Debt; payment: CardPayment } {
+  const payment = createCardPayment({ amount: Math.max(0, amount), date, fromAccountId });
+  return { debt: { ...debt, payments: [...(debt.payments ?? []), payment] }, payment };
+}
+
+/** Balance to use in net-position/charts: derived for cards, stored otherwise. */
+export function effectiveDebtBalance(debt: Debt, transactions: Transaction[]): number {
+  return isCreditCard(debt) ? creditCardBalance(debt, transactions) : debt.currentBalance;
 }
 
 export function parseTransactionRow(header: string[], row: string[]): Transaction | null {

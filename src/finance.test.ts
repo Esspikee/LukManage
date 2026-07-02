@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyCreditCardPayment,
   applyDebtPayment,
   buildBudgetProgress,
+  creditCardBalance,
+  creditCardCharges,
+  creditCardStatement,
+  effectiveDebtBalance,
+  isCreditCard,
   buildForecast,
   buildHealthIssues,
   buildReport,
@@ -544,5 +550,74 @@ describe("coerceFinanceState", () => {
       debts: [],
       transactions: [],
     });
+  });
+});
+
+describe("credit card", () => {
+  const card: Debt = {
+    id: "cc",
+    name: "Credit Card",
+    currentBalance: 0,
+    monthlyPayment: 0,
+    dueDate: "",
+    notes: "",
+    isCreditCard: true,
+    linkedCategory: "TC",
+    cutoffDay: 5,
+    payments: [],
+  };
+
+  const charges: Transaction[] = [
+    tx({ id: "c1", fecha: "2026-03-02", gastoIngresoAhorro: "Gasto", categoria: "TC", monto: 100000 }),
+    tx({ id: "c2", fecha: "2026-03-04", gastoIngresoAhorro: "Gasto", categoria: " tc ", monto: 50000 }),
+    tx({ id: "c3", fecha: "2026-03-10", gastoIngresoAhorro: "Gasto", categoria: "TC", monto: 30000 }),
+    tx({ id: "other", fecha: "2026-03-03", gastoIngresoAhorro: "Gasto", categoria: "Food", monto: 9999 }),
+    tx({ id: "income", fecha: "2026-03-03", gastoIngresoAhorro: "Ingreso", categoria: "TC", monto: 7777 }),
+  ];
+
+  it("collects only linked-category Gasto rows (case/space-insensitive)", () => {
+    expect(creditCardCharges(card, charges).map((t) => t.id)).toEqual(["c1", "c2", "c3"]);
+  });
+
+  it("derives the live balance as charges minus payments, floored at 0", () => {
+    expect(creditCardBalance(card, charges)).toBe(180000);
+    const paid = { ...card, payments: [{ id: "p", date: "2026-03-06", amount: 150000 }] };
+    expect(creditCardBalance(paid, charges)).toBe(30000);
+    const overpaid = { ...card, payments: [{ id: "p", date: "2026-03-06", amount: 999999 }] };
+    expect(creditCardBalance(overpaid, charges)).toBe(0);
+  });
+
+  it("freezes the statement at the cutoff day and flags closed", () => {
+    // On the 6th the cycle has closed; charges on/before the 5th (c1+c2) are due.
+    const statement = creditCardStatement(card, charges, "2026-03-06");
+    expect(statement.closed).toBe(true);
+    expect(statement.cutoffDate).toBe("2026-03-05");
+    expect(statement.amountDue).toBe(150000);
+  });
+
+  it("uses last month's cutoff before this month's cutoff day", () => {
+    const statement = creditCardStatement(card, charges, "2026-03-03");
+    expect(statement.closed).toBe(false);
+    expect(statement.cutoffDate).toBe("2026-02-05");
+    expect(statement.amountDue).toBe(0);
+  });
+
+  it("records a payment without creating an expense", () => {
+    const { debt, payment } = applyCreditCardPayment(card, 180000, "2026-03-06", "saving_1");
+    expect(debt.payments).toHaveLength(1);
+    expect(payment).toMatchObject({ amount: 180000, date: "2026-03-06", fromAccountId: "saving_1" });
+    expect(creditCardBalance(debt, charges)).toBe(0);
+  });
+
+  it("effectiveDebtBalance derives for cards and passes through for plain debts", () => {
+    expect(effectiveDebtBalance(card, charges)).toBe(180000);
+    const loan: Debt = { id: "l", name: "Loan", currentBalance: 500000, monthlyPayment: 100000, dueDate: "", notes: "" };
+    expect(effectiveDebtBalance(loan, charges)).toBe(500000);
+  });
+
+  it("isCreditCard requires the flag and a linked category", () => {
+    expect(isCreditCard(card)).toBe(true);
+    expect(isCreditCard({ ...card, linkedCategory: "" })).toBe(false);
+    expect(isCreditCard({ ...card, isCreditCard: false })).toBe(false);
   });
 });

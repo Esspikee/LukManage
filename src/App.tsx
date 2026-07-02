@@ -6,6 +6,7 @@ import {
   CalendarRange,
   CheckCircle2,
   Circle,
+  CreditCard,
   Download,
   Forward,
   Landmark,
@@ -46,6 +47,7 @@ import { repository } from "./persistence";
 import type { Budget, Category, Debt, FinanceState, RecurringPayment, SavingsAccount, Transaction, TransactionType } from "./types";
 import {
   budgetKey,
+  applyCreditCardPayment,
   applyDebtPayment,
   buildBudgetProgress,
   buildForecast,
@@ -53,6 +55,10 @@ import {
   buildReport,
   buildTransactionTotals,
   clampDueDay,
+  creditCardBalance,
+  creditCardStatement,
+  effectiveDebtBalance,
+  isCreditCard,
   coerceFinanceState,
   createEmptyState,
   createSampleState,
@@ -170,7 +176,7 @@ export function App() {
 
   const totals = useMemo(() => {
     const totalSavings = state.savingsAccounts.reduce((sum, account) => sum + account.balance, 0);
-    const totalDebt = state.debts.reduce((sum, debt) => sum + debt.currentBalance, 0);
+    const totalDebt = state.debts.reduce((sum, debt) => sum + effectiveDebtBalance(debt, state.transactions), 0);
     const totalIncome = state.transactions
       .filter((transaction) => transaction.gastoIngresoAhorro === "Ingreso")
       .reduce((sum, transaction) => sum + transaction.monto, 0);
@@ -241,6 +247,8 @@ export function App() {
     const name = normalizeLabel(form.get("name"));
     if (!name) return;
 
+    const asCreditCard = form.get("isCreditCard") === "on";
+
     setState((current) => ({
       ...current,
       debts: [
@@ -251,6 +259,14 @@ export function App() {
           monthlyPayment: toNumber(form.get("monthlyPayment")),
           dueDate: String(form.get("dueDate") || ""),
           notes: normalizeLabel(form.get("notes")),
+          ...(asCreditCard
+            ? {
+                isCreditCard: true,
+                linkedCategory: normalizeLabel(form.get("linkedCategory")) || "TC",
+                cutoffDay: clampDueDay(toNumber(form.get("cutoffDay"))),
+                payments: [],
+              }
+            : {}),
         }),
       ],
     }));
@@ -392,6 +408,33 @@ export function App() {
     }));
     setActiveSection("current");
     setCurrentSub("transactions");
+  }
+
+  function payCreditCard(id: string, fromAccountId?: string) {
+    const debt = state.debts.find((item) => item.id === id);
+    if (!debt || !isCreditCard(debt)) return;
+
+    const amount = creditCardBalance(debt, state.transactions);
+    if (amount <= 0) {
+      window.alert("This card has no balance to pay right now.");
+      return;
+    }
+
+    const account = fromAccountId ? state.savingsAccounts.find((item) => item.id === fromAccountId) : undefined;
+    const suffix = account ? ` from ${account.bankName}` : "";
+    if (!window.confirm(`Pay ${formatCurrency(amount)} toward ${debt.name}${suffix}? This clears the card balance.`)) return;
+
+    setState((current) => ({
+      ...current,
+      debts: current.debts.map((item) =>
+        item.id === id ? applyCreditCardPayment(item, amount, todayIso(), fromAccountId).debt : item,
+      ),
+      savingsAccounts: account
+        ? current.savingsAccounts.map((item) =>
+            item.id === fromAccountId ? { ...item, balance: item.balance - amount } : item,
+          )
+        : current.savingsAccounts,
+    }));
   }
 
   function removeTransaction(id: string) {
@@ -862,7 +905,16 @@ export function App() {
               />
             )}
             {settingsSub === "debts" && (
-              <DebtsView debts={state.debts} onAdd={addDebt} onPostPayment={postDebtPayment} onRemove={removeDebt} onUpdate={updateDebt} />
+              <DebtsView
+                accounts={state.savingsAccounts}
+                debts={state.debts}
+                onAdd={addDebt}
+                onPayCard={payCreditCard}
+                onPostPayment={postDebtPayment}
+                onRemove={removeDebt}
+                onUpdate={updateDebt}
+                transactions={state.transactions}
+              />
             )}
             {settingsSub === "backup" && (
               <BackupView
@@ -994,6 +1046,7 @@ function Dashboard({
   const averageBudgetUsed = budgetProgress.length
     ? Math.round(budgetProgress.reduce((sum, item) => sum + item.percentUsed, 0) / budgetProgress.length)
     : 0;
+  const debtsForChart = debts.map((debt) => ({ ...debt, currentBalance: effectiveDebtBalance(debt, transactions) }));
 
   if (isFirstRun) {
     return <Welcome onNavigate={onNavigate} />;
@@ -1048,7 +1101,7 @@ function Dashboard({
 
         <ChartPanel title="Debt by name" empty={debts.length === 0}>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={debts}>
+            <BarChart data={debtsForChart}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" />
               <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
@@ -1385,49 +1438,156 @@ function SavingsView({
 }
 
 function DebtsView({
+  accounts,
   debts,
   onAdd,
+  onPayCard,
   onPostPayment,
   onRemove,
   onUpdate,
+  transactions,
 }: {
+  accounts: SavingsAccount[];
   debts: Debt[];
   onAdd: (event: FormEvent<HTMLFormElement>) => void;
+  onPayCard: (id: string, fromAccountId?: string) => void;
   onPostPayment: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, patch: Partial<Debt>) => void;
+  transactions: Transaction[];
 }) {
+  const [creditCardMode, setCreditCardMode] = useState(false);
+  const creditCards = debts.filter((debt) => isCreditCard(debt));
+  const regularDebts = debts.filter((debt) => !isCreditCard(debt));
+
   return (
     <div className="stack">
-      <Header title="Debts" subtitle="Track what you owe, without interest-rate complexity." />
+      <Header title="Debts" subtitle="Track what you owe, plus credit cards that float with spending." />
       <form className="entry-form debt-form" onSubmit={onAdd}>
         <label>
           Debt name
-          <input name="name" placeholder="Credit card" required />
+          <input name="name" placeholder={creditCardMode ? "Credit card" : "Personal loan"} required />
         </label>
-        <label>
-          Current balance
-          <input name="currentBalance" inputMode="decimal" placeholder="1200000" required />
-        </label>
-        <label>
-          Monthly payment
-          <input name="monthlyPayment" inputMode="decimal" placeholder="400000" />
-        </label>
-        <label>
-          Due date
-          <input name="dueDate" type="date" />
-        </label>
+        {creditCardMode ? (
+          <>
+            <label>
+              Linked category
+              <input name="linkedCategory" defaultValue="TC" placeholder="TC" />
+            </label>
+            <label>
+              Statement cutoff day
+              <input name="cutoffDay" inputMode="numeric" defaultValue="5" placeholder="5" />
+            </label>
+          </>
+        ) : (
+          <>
+            <label>
+              Current balance
+              <input name="currentBalance" inputMode="decimal" placeholder="1200000" />
+            </label>
+            <label>
+              Monthly payment
+              <input name="monthlyPayment" inputMode="decimal" placeholder="400000" />
+            </label>
+            <label>
+              Due date
+              <input name="dueDate" type="date" />
+            </label>
+          </>
+        )}
         <label className="wide">
           Notes
           <input name="notes" placeholder="Optional" />
         </label>
+        <label className="checkbox-label">
+          <input
+            checked={creditCardMode}
+            name="isCreditCard"
+            onChange={(event) => setCreditCardMode(event.currentTarget.checked)}
+            type="checkbox"
+          />
+          This is a credit card (balance floats with linked-category spending)
+        </label>
         <button className="primary-button" type="submit">
           <Plus size={18} />
-          Add debt
+          Add {creditCardMode ? "credit card" : "debt"}
         </button>
       </form>
-      <DebtsTable debts={debts} onPostPayment={onPostPayment} onRemove={onRemove} onUpdate={onUpdate} />
+
+      {creditCards.map((debt) => (
+        <CreditCardPanel
+          accounts={accounts}
+          debt={debt}
+          key={debt.id}
+          onPay={onPayCard}
+          onRemove={onRemove}
+          transactions={transactions}
+        />
+      ))}
+
+      <DebtsTable debts={regularDebts} onPostPayment={onPostPayment} onRemove={onRemove} onUpdate={onUpdate} />
     </div>
+  );
+}
+
+function CreditCardPanel({
+  accounts,
+  debt,
+  onPay,
+  onRemove,
+  transactions,
+}: {
+  accounts: SavingsAccount[];
+  debt: Debt;
+  onPay: (id: string, fromAccountId?: string) => void;
+  onRemove: (id: string) => void;
+  transactions: Transaction[];
+}) {
+  const [fromAccountId, setFromAccountId] = useState("");
+  const balance = creditCardBalance(debt, transactions);
+  const statement = creditCardStatement(debt, transactions);
+
+  return (
+    <section className="panel credit-card-panel">
+      <div className="panel-title">
+        <CreditCard size={18} />
+        <h3>{debt.name}</h3>
+        <IconButton label="Delete card" onClick={() => onRemove(debt.id)} />
+      </div>
+      <div className="metric-grid">
+        <Metric label="Current balance" value={formatCurrency(balance)} tone={balance > 0 ? "negative" : "positive"} />
+        <Metric
+          label={statement.closed ? `Statement due (closed ${statement.cutoffDate})` : "Statement (cycle open)"}
+          value={formatCurrency(statement.amountDue)}
+          tone={statement.amountDue > 0 ? "negative" : "positive"}
+        />
+      </div>
+      <p className="credit-card-hint">
+        Every <strong>Gasto</strong> in category <strong>{debt.linkedCategory}</strong> adds here automatically. Cutoff day: {debt.cutoffDay}.
+      </p>
+      <div className="credit-card-actions">
+        <label>
+          Pay from
+          <select onChange={(event) => setFromAccountId(event.currentTarget.value)} value={fromAccountId}>
+            <option value="">Don&apos;t deduct</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.bankName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="primary-button"
+          disabled={balance <= 0}
+          onClick={() => onPay(debt.id, fromAccountId || undefined)}
+          type="button"
+        >
+          <CheckCircle2 size={18} />
+          Pay {formatCurrency(balance)}
+        </button>
+      </div>
+    </section>
   );
 }
 

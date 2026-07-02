@@ -16,6 +16,13 @@ export type SavingsAccount = {
   balance: number;
 };
 
+export type CardPayment = {
+  id: string;
+  date: string;
+  amount: number;
+  fromAccountId?: string;
+};
+
 export type Debt = {
   id: string;
   name: string;
@@ -23,6 +30,13 @@ export type Debt = {
   monthlyPayment: number;
   dueDate: string;
   notes: string;
+  // Credit-card mode: when isCreditCard is true, the balance is DERIVED from
+  // linked-category expenses minus payments (currentBalance is ignored for
+  // display). Optional so existing debts and JSON backups stay valid.
+  isCreditCard?: boolean;
+  linkedCategory?: string;
+  cutoffDay?: number;
+  payments?: CardPayment[];
 };
 
 export type RecurringPayment = {
