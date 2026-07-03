@@ -102,6 +102,9 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 const transactionTypes: TransactionType[] = ["Gasto", "Ingreso", "Ahorro"];
+// New transactions are only income or expense; wallet moves are transfers we
+// don't log. "Ahorro" stays in transactionTypes so historical rows still edit.
+const transactionEntryTypes: TransactionType[] = ["Gasto", "Ingreso"];
 // Golden chart family: gold anchor, then tonal steps + one neutral so
 // multi-series charts stay readable without leaving the palette.
 const chartColors = ["#FFC212", "#D99E0B", "#8C6A10", "#FFDD7A", "#9A9AA5", "#F0F0F3"];
@@ -1905,9 +1908,9 @@ function TransactionsView({
           <input defaultValue={todayIso()} name="fecha" type="date" required />
         </label>
         <label>
-          Gasto/Ingreso/Ahorro
+          Gasto/Ingreso
           <select name="tipo">
-            {transactionTypes.map((type) => (
+            {transactionEntryTypes.map((type) => (
               <option key={type}>{type}</option>
             ))}
           </select>
