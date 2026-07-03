@@ -79,6 +79,8 @@ import {
   previousReportMonth,
   recurringPaymentKey,
   reportPeriods,
+  reverseTransactionFromDebts,
+  reverseTransactionFromSavingsAccounts,
   savingsKey,
   sortTransactions,
   transactionKey,
@@ -556,10 +558,17 @@ export function App() {
   }
 
   function removeTransaction(id: string) {
-    setState((current) => ({
-      ...current,
-      transactions: current.transactions.filter((transaction) => transaction.id !== id),
-    }));
+    setState((current) => {
+      const transaction = current.transactions.find((item) => item.id === id);
+      if (!transaction) return current;
+
+      return {
+        ...current,
+        debts: reverseTransactionFromDebts(current.debts, transaction),
+        savingsAccounts: reverseTransactionFromSavingsAccounts(current.savingsAccounts, transaction),
+        transactions: current.transactions.filter((item) => item.id !== id),
+      };
+    });
   }
 
   function removeBudget(id: string) {
@@ -591,12 +600,21 @@ export function App() {
   }
 
   function updateTransaction(id: string, patch: Partial<Transaction>) {
-    setState((current) => ({
-      ...current,
-      transactions: current.transactions.map((transaction) =>
-        transaction.id === id ? { ...transaction, ...patch } : transaction,
-      ),
-    }));
+    setState((current) => {
+      const previousTransaction = current.transactions.find((transaction) => transaction.id === id);
+      if (!previousTransaction) return current;
+
+      const nextTransaction = { ...previousTransaction, ...patch };
+      const revertedDebts = reverseTransactionFromDebts(current.debts, previousTransaction);
+      const revertedSavingsAccounts = reverseTransactionFromSavingsAccounts(current.savingsAccounts, previousTransaction);
+
+      return {
+        ...current,
+        debts: applyTransactionToDebts(revertedDebts, nextTransaction),
+        savingsAccounts: applyTransactionToSavingsAccounts(revertedSavingsAccounts, nextTransaction),
+        transactions: current.transactions.map((transaction) => (transaction.id === id ? nextTransaction : transaction)),
+      };
+    });
   }
 
   function removeRecurringPayment(id: string) {

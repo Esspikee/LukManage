@@ -533,6 +533,22 @@ export function applyTransactionToSavingsAccounts(accounts: SavingsAccount[], tr
   return changed ? nextAccounts : accounts;
 }
 
+export function reverseTransactionFromSavingsAccounts(accounts: SavingsAccount[], transaction: Transaction): SavingsAccount[] {
+  if (transaction.gastoIngresoAhorro !== "Ingreso" || transaction.monto <= 0) return accounts;
+
+  const categoryKey = normalizeLabel(transaction.categoria).toLowerCase();
+  if (!categoryKey) return accounts;
+
+  let changed = false;
+  const nextAccounts = accounts.map((account) => {
+    if (normalizeLabel(account.bankName).toLowerCase() !== categoryKey) return account;
+    changed = true;
+    return { ...account, balance: account.balance - transaction.monto };
+  });
+
+  return changed ? nextAccounts : accounts;
+}
+
 export function applyTransactionToDebts(debts: Debt[], transaction: Transaction): Debt[] {
   if (transaction.gastoIngresoAhorro !== "Gasto" || transaction.monto <= 0) return debts;
 
@@ -544,6 +560,22 @@ export function applyTransactionToDebts(debts: Debt[], transaction: Transaction)
     if (isCreditCard(debt) || normalizeLabel(debt.name).toLowerCase() !== debtNameKey) return debt;
     changed = true;
     return { ...debt, currentBalance: Math.max(0, debt.currentBalance - transaction.monto) };
+  });
+
+  return changed ? nextDebts : debts;
+}
+
+export function reverseTransactionFromDebts(debts: Debt[], transaction: Transaction): Debt[] {
+  if (transaction.gastoIngresoAhorro !== "Gasto" || transaction.monto <= 0) return debts;
+
+  const debtNameKey = normalizeLabel(transaction.subcategoria).toLowerCase();
+  if (!isDebtPaymentCategory(transaction.categoria) || !debtNameKey) return debts;
+
+  let changed = false;
+  const nextDebts = debts.map((debt) => {
+    if (isCreditCard(debt) || normalizeLabel(debt.name).toLowerCase() !== debtNameKey) return debt;
+    changed = true;
+    return { ...debt, currentBalance: debt.currentBalance + transaction.monto };
   });
 
   return changed ? nextDebts : debts;

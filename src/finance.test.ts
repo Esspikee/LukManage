@@ -36,6 +36,8 @@ import {
   periodLabel,
   periodMonthLength,
   previousReportMonth,
+  reverseTransactionFromDebts,
+  reverseTransactionFromSavingsAccounts,
   savingsKey,
   sortTransactions,
   transactionDateParts,
@@ -302,16 +304,30 @@ describe("applyTransactionToSavingsAccounts", () => {
   ];
 
   it("adds ingreso amounts to the bank whose name matches the transaction category", () => {
-    const updated = applyTransactionToSavingsAccounts(accounts, tx({
-      categoria: " lulo bank ",
-      gastoIngresoAhorro: "Ingreso",
-      monto: 25000,
-    }));
+    const updated = applyTransactionToSavingsAccounts(
+      accounts,
+      tx({
+        categoria: " lulo bank ",
+        gastoIngresoAhorro: "Ingreso",
+        monto: 25000,
+      }),
+    );
 
     expect(updated).toEqual([
       { id: "lulo", bankName: "Lulo Bank", balance: 125000 },
       { id: "other", bankName: "Other Bank", balance: 50000 },
     ]);
+  });
+
+  it("reverses ingreso amounts when a matching bank-balance transaction is deleted or edited", () => {
+    const transaction = tx({
+      categoria: "Lulo Bank",
+      gastoIngresoAhorro: "Ingreso",
+      monto: 25000,
+    });
+
+    const applied = applyTransactionToSavingsAccounts(accounts, transaction);
+    expect(reverseTransactionFromSavingsAccounts(applied, transaction)).toEqual(accounts);
   });
 
   it("does not change balances for gastos, ahorros, missing banks, or non-positive amounts", () => {
@@ -509,6 +525,15 @@ describe("debt payment helpers", () => {
 
     expect(updated[0].currentBalance).toBe(750);
     expect(updated[1]).toBe(debts[1]);
+  });
+
+  it("reverses a matching regular debt when the manual Deuda transaction is deleted or edited", () => {
+    const debts: Debt[] = [{ id: "apt", name: "Apartamento", currentBalance: 15030000, monthlyPayment: 30000, dueDate: "", notes: "" }];
+    const transaction = tx({ categoria: "Deuda", subcategoria: "Apartamento", gastoIngresoAhorro: "Gasto", monto: 30000 });
+
+    const applied = applyTransactionToDebts(debts, transaction);
+    expect(applied[0].currentBalance).toBe(15000000);
+    expect(reverseTransactionFromDebts(applied, transaction)).toEqual(debts);
   });
 
   it("ignores non-debt transactions when reducing regular debts", () => {
@@ -787,6 +812,10 @@ describe("credit card", () => {
     expect(creditCardBalance(paid, charges)).toBe(30000);
     const overpaid = { ...card, payments: [{ id: "p", date: "2026-03-06", amount: 999999 }] };
     expect(creditCardBalance(overpaid, charges)).toBe(0);
+  });
+
+  it("drops deleted credit-card charge transactions from the derived balance", () => {
+    expect(creditCardBalance(card, charges.filter((transaction) => transaction.id !== "c1"))).toBe(80000);
   });
 
   it("freezes the statement at the cutoff day and flags closed", () => {
