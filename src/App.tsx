@@ -102,6 +102,9 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 const transactionTypes: TransactionType[] = ["Gasto", "Ingreso", "Ahorro"];
+// New transactions are only income or expense; wallet moves are transfers we
+// don't log. "Ahorro" stays in transactionTypes so historical rows still edit.
+const transactionEntryTypes: TransactionType[] = ["Gasto", "Ingreso"];
 // Golden chart family: gold anchor, then tonal steps + one neutral so
 // multi-series charts stay readable without leaving the palette.
 const chartColors = ["#FFC212", "#D99E0B", "#8C6A10", "#FFDD7A", "#9A9AA5", "#F0F0F3"];
@@ -936,6 +939,7 @@ export function App() {
       </header>
 
       <section className="content">
+        <div className={activeSection === "settings" ? undefined : "section-animate"} key={activeSection}>
         {activeSection === "current" && (
           <>
             <nav className="subnav" aria-label="Current month sections">
@@ -1068,6 +1072,7 @@ export function App() {
             )}
           </>
         )}
+        </div>
       </section>
     </main>
   );
@@ -1874,7 +1879,6 @@ function TransactionsView({
 
   return (
     <div className="stack">
-      <Header title="Transactions" subtitle="Your six-column register starts here." />
       {quickPicks.length ? (
         <section className="quick-entry">
           <div className="panel-title">
@@ -1906,9 +1910,9 @@ function TransactionsView({
           <input defaultValue={todayIso()} name="fecha" type="date" required />
         </label>
         <label>
-          Gasto/Ingreso/Ahorro
+          Gasto/Ingreso
           <select name="tipo">
-            {transactionTypes.map((type) => (
+            {transactionEntryTypes.map((type) => (
               <option key={type}>{type}</option>
             ))}
           </select>
@@ -2474,7 +2478,7 @@ function Datalist({ id, options }: { id: string; options: string[] }) {
   );
 }
 
-function Header({ eyebrow = "Phase 1", subtitle, title }: { eyebrow?: string | null; subtitle?: string; title: string }) {
+function Header({ eyebrow = null, subtitle, title }: { eyebrow?: string | null; subtitle?: string; title: string }) {
   return (
     <header className="section-header">
       {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
