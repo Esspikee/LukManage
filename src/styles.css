@@ -175,6 +175,29 @@ select {
   overflow: auto;
 }
 
+/* Section switch (Past / Current Month / Future) fades and rises in. */
+.section-animate {
+  animation: section-in 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes section-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .section-animate {
+    animation: none;
+  }
+}
+
 .app-loading {
   display: flex;
   flex: 1;

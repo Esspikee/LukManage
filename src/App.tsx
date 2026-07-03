@@ -939,6 +939,7 @@ export function App() {
       </header>
 
       <section className="content">
+        <div className={activeSection === "settings" ? undefined : "section-animate"} key={activeSection}>
         {activeSection === "current" && (
           <>
             <nav className="subnav" aria-label="Current month sections">
@@ -1071,6 +1072,7 @@ export function App() {
             )}
           </>
         )}
+        </div>
       </section>
     </main>
   );
