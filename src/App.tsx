@@ -1874,7 +1874,6 @@ function TransactionsView({
 
   return (
     <div className="stack">
-      <Header title="Transactions" subtitle="Your six-column register starts here." />
       {quickPicks.length ? (
         <section className="quick-entry">
           <div className="panel-title">
@@ -2474,7 +2473,7 @@ function Datalist({ id, options }: { id: string; options: string[] }) {
   );
 }
 
-function Header({ eyebrow = "Phase 1", subtitle, title }: { eyebrow?: string | null; subtitle?: string; title: string }) {
+function Header({ eyebrow = null, subtitle, title }: { eyebrow?: string | null; subtitle?: string; title: string }) {
   return (
     <header className="section-header">
       {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
