@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -56,7 +56,6 @@ import {
   buildHealthIssues,
   buildReport,
   buildReportComparison,
-  buildTransactionQuickPicks,
   clampDueDay,
   creditCardBalance,
   debtPayoffMonths,
@@ -86,7 +85,7 @@ import {
   transactionFromRecurringPayment,
   uniqueSorted,
 } from "./finance";
-import type { BudgetProgress, CategoryUsage, DebtOverview, ForecastData, HealthIssue, ReportComparison, ReportData, ReportPeriod, TransactionQuickPick } from "./finance";
+import type { BudgetProgress, CategoryUsage, DebtOverview, ForecastData, HealthIssue, ReportComparison, ReportData, ReportPeriod } from "./finance";
 
 type Section = "past" | "current" | "future" | "settings";
 type CurrentSub = "overview" | "transactions" | "budgets" | "categories";
@@ -1859,52 +1858,14 @@ function TransactionsView({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [keyword, setKeyword] = useState("");
-  const formRef = useRef<HTMLFormElement>(null);
-  const quickPicks = useMemo(() => buildTransactionQuickPicks(transactions), [transactions]);
   const filteredTransactions = useMemo(
     () => sortTransactions(filterTransactions(transactions, { dateFrom, dateTo, keyword }), "date-desc"),
     [dateFrom, dateTo, keyword, transactions],
   );
-  const applyQuickPick = (pick: TransactionQuickPick) => {
-    const form = formRef.current;
-    if (!form) return;
-    setFormFieldValue(form, "fecha", todayIso());
-    setFormFieldValue(form, "tipo", pick.type);
-    setFormFieldValue(form, "categoria", pick.category);
-    setFormFieldValue(form, "subcategoria", pick.subcategory);
-    setFormFieldValue(form, "descripcion", pick.description);
-    setFormFieldValue(form, "monto", pick.amount);
-    focusFormField(form, "monto", true);
-  };
 
   return (
     <div className="stack">
-      {quickPicks.length ? (
-        <section className="quick-entry">
-          <div className="panel-title">
-            <ReceiptText size={18} />
-            <h3>Recent</h3>
-          </div>
-          <div className="quick-pick-list">
-            {quickPicks.map((pick) => (
-              <button className="quick-pick" key={pick.id} onClick={() => applyQuickPick(pick)} type="button">
-                <span>
-                  <strong>{pick.description}</strong>
-                  <small>
-                    {pick.type} / {pick.category}
-                    {pick.subcategory ? ` / ${pick.subcategory}` : ""}
-                  </small>
-                </span>
-                <span className="quick-pick-meta">
-                  <em>{formatCurrency(pick.amount)}</em>
-                  {pick.count > 1 ? <small>{pick.count}x</small> : null}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-      <form className="entry-form transaction-form" onSubmit={onAdd} ref={formRef}>
+      <form className="entry-form transaction-form" onSubmit={onAdd}>
         <label>
           Fecha
           <input defaultValue={todayIso()} name="fecha" type="date" required />
