@@ -47,6 +47,7 @@ import {
   budgetKey,
   applyCreditCardPayment,
   applyDebtPayment,
+  applyTransactionToDebts,
   applyTransactionToSavingsAccounts,
   buildBudgetProgress,
   buildCategoryUsage,
@@ -358,6 +359,7 @@ export function App() {
 
       return {
         ...current,
+        debts: applyTransactionToDebts(current.debts, transaction),
         savingsAccounts: applyTransactionToSavingsAccounts(current.savingsAccounts, transaction),
         transactions: [transaction, ...current.transactions],
       };
@@ -896,7 +898,7 @@ export function App() {
       const parsed = JSON.parse(text) as unknown;
       const nextState = coerceFinanceState(parsed);
       const counts = financeRecordCounts(nextState);
-      const message = `Restore this backup and replace current local data?\n\nBackup contains ${counts.transactions} transactions, ${counts.savingsAccounts} savings banks, ${counts.debts} debts, ${counts.budgets} budgets, ${counts.categories} categories, and ${counts.recurringPayments} recurring items.`;
+      const message = `Restore this backup and replace current local data?\n\nBackup contains ${counts.transactions} transactions, ${counts.savingsAccounts} bank balances, ${counts.debts} debts, ${counts.budgets} budgets, ${counts.categories} categories, and ${counts.recurringPayments} recurring items.`;
       if (!window.confirm(message)) return;
 
       setState(nextState);
@@ -1019,7 +1021,7 @@ export function App() {
         {activeSection === "settings" && (
           <>
             <nav className="subnav" aria-label="Settings sections">
-              <TabButton icon={<Landmark size={16} />} label="Savings" tab="savings" active={settingsSub} onClick={setSettingsSub} />
+              <TabButton icon={<Landmark size={16} />} label="Bank Balance" tab="savings" active={settingsSub} onClick={setSettingsSub} />
               <TabButton icon={<Scale size={16} />} label="Debts" tab="debts" active={settingsSub} onClick={setSettingsSub} />
               <TabButton icon={<Download size={16} />} label="Backup" tab="backup" active={settingsSub} onClick={setSettingsSub} />
               <TabButton icon={<AlertTriangle size={16} />} label="Health" tab="health" active={settingsSub} onClick={setSettingsSub} badge={healthIssues.length} />
@@ -1149,7 +1151,7 @@ function Dashboard({
     {
       cta: "Add a bank",
       done: savingsAccounts.length > 0,
-      label: "Add your savings banks",
+      label: "Add your bank balances",
       section: "settings",
       sub: "savings",
       value: `${savingsAccounts.length} bank${savingsAccounts.length === 1 ? "" : "s"}`,
@@ -1189,7 +1191,7 @@ function Dashboard({
       <Header eyebrow={null} title="Dashboard" subtitle="Your current position and this month's movement." />
       {!setupComplete ? <SetupChecklist items={setupItems} onNavigate={onNavigate} /> : null}
       <div className="metric-grid">
-        <Metric label="Total saved" value={formatCurrency(totals.totalSavings)} tone="positive" />
+        <Metric label="Bank balance" value={formatCurrency(totals.totalSavings)} tone="positive" />
         <Metric label="Total debt" value={formatCurrency(totals.totalDebt)} tone="negative" />
         <Metric label="Net position" value={formatCurrency(totals.netPosition)} tone={totals.netPosition >= 0 ? "positive" : "negative"} />
         <Metric
@@ -1635,7 +1637,7 @@ function SavingsView({
 }) {
   return (
     <div className="stack">
-      <Header title="Savings" subtitle="Register each bank and the money currently saved there." />
+      <Header title="Bank Balance" subtitle="Register each bank and the money currently available there." />
       <form className="entry-form" onSubmit={onAdd}>
         <label>
           Bank name
@@ -1689,14 +1691,9 @@ function DebtsView({
           <h3>Debt picture</h3>
         </div>
         <div className="metric-grid">
-          <Metric label="Regular debt" value={formatCurrency(debtOverview.regularDebtTotal)} tone={debtOverview.regularDebtTotal ? "negative" : "positive"} />
-          <Metric label="Credit cards" value={formatCurrency(debtOverview.creditCardTotal)} tone={debtOverview.creditCardTotal ? "negative" : "positive"} />
-          <Metric label="Next debt payments" value={formatCurrency(debtOverview.monthlyDebtPayments)} tone="neutral" />
-          <Metric
-            label="Longest payoff"
-            value={debtOverview.estimatedPayoffMonths == null ? "Missing payment" : `${debtOverview.estimatedPayoffMonths} mo`}
-            tone={debtOverview.estimatedPayoffMonths == null && debtOverview.regularDebtTotal ? "negative" : "neutral"}
-          />
+          <Metric label="Overall debt" value={formatCurrency(debtOverview.totalDebt)} tone={debtOverview.totalDebt ? "negative" : "positive"} />
+          <Metric label="Credit card" value={formatCurrency(debtOverview.creditCardTotal)} tone={debtOverview.creditCardTotal ? "negative" : "positive"} />
+          <Metric label="Apartment" value={formatCurrency(debtOverview.apartmentDebtTotal)} tone={debtOverview.apartmentDebtTotal ? "negative" : "positive"} />
         </div>
         <p className="panel-copy">
           Credit card purchases increase the card balance through their linked category. Paying the card only clears that balance and does not add another expense.
@@ -2102,7 +2099,7 @@ function FutureView({
     <div className="stack">
       <Header eyebrow={null} title="Future" />
       <div className="metric-grid">
-        <Metric label="Starting savings" value={formatCurrency(forecast.startingSavings)} tone="positive" />
+        <Metric label="Starting balance" value={formatCurrency(forecast.startingSavings)} tone="positive" />
         <Metric label="Expected income" value={formatCurrency(forecast.recurringIncome)} tone="positive" />
         <Metric label="Expected outflow" value={formatCurrency(forecast.recurringExpenses + forecast.recurringSavings + forecast.debtPayments)} tone="negative" />
         <Metric
@@ -2353,7 +2350,7 @@ function BackupView({
               Categories CSV
             </button>
             <button className="secondary-button" onClick={() => onCsvExport("savings")} type="button">
-              Savings CSV
+              Bank Balance CSV
             </button>
             <button className="secondary-button" onClick={() => onCsvExport("debts")} type="button">
               Debts CSV
@@ -2387,7 +2384,7 @@ function BackupView({
               <input accept=".csv,text/csv" onChange={(event) => onCsvImport(event, "categories")} type="file" />
             </label>
             <label className="file-button compact">
-              Savings CSV
+              Bank Balance CSV
               <input accept=".csv,text/csv" onChange={(event) => onCsvImport(event, "savings")} type="file" />
             </label>
             <label className="file-button compact">
@@ -2417,7 +2414,7 @@ function BackupView({
       </section>
       {importSummary ? <div className="import-summary">{importSummary}</div> : null}
       <div className="metric-grid">
-        <Metric label="Savings banks" value={state.savingsAccounts.length.toString()} tone="neutral" />
+        <Metric label="Bank balances" value={state.savingsAccounts.length.toString()} tone="neutral" />
         <Metric label="Debts" value={state.debts.length.toString()} tone="negative" />
         <Metric label="Transactions" value={state.transactions.length.toString()} tone="positive" />
         <Metric label="Budgets" value={state.budgets.length.toString()} tone="neutral" />
@@ -2606,7 +2603,7 @@ function SavingsTable({
   onRemove: (id: string) => void;
   onUpdate: (id: string, patch: Partial<SavingsAccount>) => void;
 }) {
-  if (!accounts.length) return <EmptyTable message="No savings banks yet." />;
+  if (!accounts.length) return <EmptyTable message="No bank balances yet." />;
   return (
     <DataTable>
       <thead>

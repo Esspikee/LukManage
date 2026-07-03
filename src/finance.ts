@@ -90,6 +90,7 @@ export type CategoryUsage = {
 };
 
 export type DebtOverview = {
+  apartmentDebtTotal: number;
   creditCardCount: number;
   creditCardTotal: number;
   estimatedPayoffMonths: number | null;
@@ -418,7 +419,7 @@ export function previousReportMonth(selectedMonth: string, period: ReportPeriod)
 
 export function buildReportComparison(current: ReportData, previous: ReportData, monthCount: number): ReportComparison {
   const debtPayments = current.filteredTransactions
-    .filter((transaction) => normalizeLabel(transaction.categoria).toLowerCase() === "debt payment")
+    .filter((transaction) => isDebtPaymentCategory(transaction.categoria))
     .reduce((sum, transaction) => sum + transaction.monto, 0);
   const topExpenseCategory = current.categoryExpenses[0]
     ? { name: current.categoryExpenses[0].name, value: current.categoryExpenses[0].value }
@@ -530,6 +531,26 @@ export function applyTransactionToSavingsAccounts(accounts: SavingsAccount[], tr
   });
 
   return changed ? nextAccounts : accounts;
+}
+
+export function applyTransactionToDebts(debts: Debt[], transaction: Transaction): Debt[] {
+  if (transaction.gastoIngresoAhorro !== "Gasto" || transaction.monto <= 0) return debts;
+
+  const debtNameKey = normalizeLabel(transaction.subcategoria).toLowerCase();
+  if (!isDebtPaymentCategory(transaction.categoria) || !debtNameKey) return debts;
+
+  let changed = false;
+  const nextDebts = debts.map((debt) => {
+    if (isCreditCard(debt) || normalizeLabel(debt.name).toLowerCase() !== debtNameKey) return debt;
+    changed = true;
+    return { ...debt, currentBalance: Math.max(0, debt.currentBalance - transaction.monto) };
+  });
+
+  return changed ? nextDebts : debts;
+}
+
+function isDebtPaymentCategory(category: string) {
+  return new Set(["deuda", "debt", "debts", "debt payment"]).has(normalizeLabel(category).toLowerCase());
 }
 
 export function savingsKey(account: SavingsAccount) {
@@ -1012,6 +1033,9 @@ export function debtPayoffMonths(debt: Debt) {
 export function buildDebtOverview(debts: Debt[], transactions: Transaction[]): DebtOverview {
   const regularDebts = debts.filter((debt) => !isCreditCard(debt));
   const creditCards = debts.filter((debt) => isCreditCard(debt));
+  const apartmentDebtTotal = regularDebts
+    .filter((debt) => ["apartamento", "apartment"].includes(normalizeLabel(debt.name).toLowerCase()))
+    .reduce((sum, debt) => sum + Math.max(0, debt.currentBalance), 0);
   const regularDebtTotal = regularDebts.reduce((sum, debt) => sum + Math.max(0, debt.currentBalance), 0);
   const creditCardTotal = creditCards.reduce((sum, debt) => sum + creditCardBalance(debt, transactions), 0);
   const monthlyDebtPayments = regularDebts.reduce((sum, debt) => sum + Math.max(0, Math.min(debt.monthlyPayment, debt.currentBalance)), 0);
@@ -1022,6 +1046,7 @@ export function buildDebtOverview(debts: Debt[], transactions: Transaction[]): D
       : null;
 
   return {
+    apartmentDebtTotal,
     creditCardCount: creditCards.length,
     creditCardTotal,
     estimatedPayoffMonths,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyCreditCardPayment,
   applyDebtPayment,
+  applyTransactionToDebts,
   applyTransactionToSavingsAccounts,
   buildBudgetProgress,
   buildCategoryUsage,
@@ -495,6 +496,29 @@ describe("debt payment helpers", () => {
     expect(applyDebtPayment({ ...debt, currentBalance: 100, monthlyPayment: 300 }).currentBalance).toBe(0);
   });
 
+  it("reduces a matching regular debt from manual Deuda transactions", () => {
+    const debts: Debt[] = [
+      { id: "apt", name: "Apartamento", currentBalance: 1000, monthlyPayment: 300, dueDate: "", notes: "" },
+      { id: "card", name: "TC", currentBalance: 0, monthlyPayment: 0, dueDate: "", notes: "", isCreditCard: true, linkedCategory: "TC" },
+    ];
+
+    const updated = applyTransactionToDebts(
+      debts,
+      tx({ categoria: "Deuda", subcategoria: "Apartamento", gastoIngresoAhorro: "Gasto", monto: 250 }),
+    );
+
+    expect(updated[0].currentBalance).toBe(750);
+    expect(updated[1]).toBe(debts[1]);
+  });
+
+  it("ignores non-debt transactions when reducing regular debts", () => {
+    const debts: Debt[] = [{ id: "apt", name: "Apartamento", currentBalance: 1000, monthlyPayment: 300, dueDate: "", notes: "" }];
+
+    expect(applyTransactionToDebts(debts, tx({ categoria: "Food", subcategoria: "Apartamento", gastoIngresoAhorro: "Gasto", monto: 250 }))).toBe(debts);
+    expect(applyTransactionToDebts(debts, tx({ categoria: "Deuda", subcategoria: "Apartamento", gastoIngresoAhorro: "Ingreso", monto: 250 }))).toBe(debts);
+    expect(applyTransactionToDebts(debts, tx({ categoria: "Deuda", subcategoria: "Other", gastoIngresoAhorro: "Gasto", monto: 250 }))).toBe(debts);
+  });
+
   it("estimates payoff months and summarizes regular debt", () => {
     expect(debtPayoffMonths(debt)).toBe(4);
     expect(debtPayoffMonths({ ...debt, monthlyPayment: 0 })).toBeNull();
@@ -508,6 +532,7 @@ describe("debt payment helpers", () => {
     );
 
     expect(overview).toMatchObject({
+      apartmentDebtTotal: 0,
       estimatedPayoffMonths: 4,
       monthlyDebtPayments: 400,
       regularDebtCount: 2,

@@ -1,6 +1,6 @@
 # LukManage
 
-LukManage is a personal, local-first finance app for tracking savings, debts, transactions, past reports, and future cash flow from a phone.
+LukManage is a personal, local-first finance app for tracking bank balances, debts, transactions, past reports, and future cash flow from a phone.
 
 The app can be hosted on GitHub Pages, but the finance records entered in the app stay in the browser storage on the device. The repository must not contain real CSV exports, spreadsheet files, or personal backup files.
 
@@ -34,7 +34,7 @@ The main navigation is intentionally simple:
   - Flow totals, category charts, and period transactions
 - Current Month
   - Overview dashboard
-  - Savings, debt, net position, current-month movement, and health status
+  - Bank balance, debt, net position, current-month movement, and health status
   - Monthly category budgets and progress
   - Transaction register using the six columns:
     - `fecha`
@@ -48,7 +48,7 @@ The main navigation is intentionally simple:
   - Debt monthly payments
   - Projected end balance
 - Settings
-  - Savings banks
+  - Bank balances
   - Debts
   - Backup/import/export
   - Health checks
