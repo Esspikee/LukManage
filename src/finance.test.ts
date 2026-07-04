@@ -398,6 +398,23 @@ describe("buildBudgetProgress", () => {
     ]);
   });
 
+  it("counts linked credit-card subcategories against matching budgets", () => {
+    const progress = buildBudgetProgress(
+      [
+        tx({ id: "cash", fecha: "2026-03-01", categoria: "Personal", subcategoria: "Snacks", monto: 200 }),
+        tx({ id: "card", fecha: "2026-03-02", categoria: "TC", subcategoria: "Personal", monto: 300 }),
+        tx({ id: "other-card", fecha: "2026-03-03", categoria: "TC", subcategoria: "Food", monto: 900 }),
+      ],
+      [{ id: "bp", category: "Personal", monthlyLimit: 1000 }],
+      "2026-03",
+      ["TC"],
+    );
+
+    expect(progress).toMatchObject([
+      { budget: { category: "Personal" }, percentUsed: 50, remaining: 500, spent: 500, status: "under" },
+    ]);
+  });
+
   it("ignores invalid budgets", () => {
     expect(
       buildBudgetProgress([tx()], [{ id: "bad", category: "", monthlyLimit: 0 }], "2026-03"),

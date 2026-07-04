@@ -807,9 +807,27 @@ function daysInMonth(year: number, month: number) {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-export function buildBudgetProgress(transactions: Transaction[], budgets: Budget[], selectedMonth: string): BudgetProgress[] {
-  const report = buildReport(transactions, selectedMonth, "month");
-  const expenses = new Map(report.categoryExpenses.map((item) => [normalizeLabel(item.name).toLowerCase(), item.value]));
+export function buildBudgetProgress(
+  transactions: Transaction[],
+  budgets: Budget[],
+  selectedMonth: string,
+  creditCardCategories: string[] = [],
+): BudgetProgress[] {
+  const cardCategoryKeys = new Set(creditCardCategories.map((category) => normalizeLabel(category).toLowerCase()).filter(Boolean));
+  const expenses = transactions.reduce((totals, transaction) => {
+    if (transaction.gastoIngresoAhorro !== "Gasto") return totals;
+    const parts = transactionDateParts(transaction.fecha);
+    if (!parts || `${parts.year}-${String(parts.month).padStart(2, "0")}` !== selectedMonth) return totals;
+
+    const category = normalizeLabel(transaction.categoria);
+    const subcategory = normalizeLabel(transaction.subcategoria);
+    const budgetCategory = cardCategoryKeys.has(category.toLowerCase()) && subcategory ? subcategory : category;
+    const key = budgetCategory.toLowerCase();
+    if (!key) return totals;
+
+    totals.set(key, (totals.get(key) || 0) + transaction.monto);
+    return totals;
+  }, new Map<string, number>());
 
   return budgets
     .filter((budget) => normalizeLabel(budget.category) && budget.monthlyLimit > 0)

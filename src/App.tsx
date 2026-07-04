@@ -20,6 +20,7 @@ import {
   Tags,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import {
   Bar,
@@ -283,9 +284,13 @@ export function App() {
   );
   const forecast = useMemo(() => buildForecast(state), [state]);
   const debtOverview = useMemo(() => buildDebtOverview(state.debts, state.transactions), [state.debts, state.transactions]);
+  const creditCardCategories = useMemo(
+    () => state.debts.filter(isCreditCard).map((debt) => debt.linkedCategory),
+    [state.debts],
+  );
   const budgetProgress = useMemo(
-    () => buildBudgetProgress(state.transactions, state.budgets, todayIso().slice(0, 7)),
-    [state.budgets, state.transactions],
+    () => buildBudgetProgress(state.transactions, state.budgets, todayIso().slice(0, 7), creditCardCategories),
+    [creditCardCategories, state.budgets, state.transactions],
   );
   const categoryUsage = useMemo(() => buildCategoryUsage(state), [state]);
   const healthIssues = useMemo(() => buildHealthIssues(state), [state]);
@@ -1870,12 +1875,27 @@ function TransactionsView({
   };
   transactions: Transaction[];
 }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [keyword, setKeyword] = useState("");
+  const [historyType, setHistoryType] = useState("");
+  const [historyCategory, setHistoryCategory] = useState("");
+  const [historySubcategory, setHistorySubcategory] = useState("");
   const filteredTransactions = useMemo(
-    () => sortTransactions(filterTransactions(transactions, { dateFrom, dateTo, keyword }), "date-desc"),
-    [dateFrom, dateTo, keyword, transactions],
+    () => {
+      if (!historyOpen) return [];
+      const typeKey = normalizeLabel(historyType).toLowerCase();
+      const categoryKey = normalizeLabel(historyCategory).toLowerCase();
+      const subcategoryKey = normalizeLabel(historySubcategory).toLowerCase();
+
+      return sortTransactions(filterTransactions(transactions, { dateFrom, dateTo }), "date-desc").filter((transaction) => {
+        const matchesType = !typeKey || transaction.gastoIngresoAhorro.toLowerCase() === typeKey;
+        const matchesCategory = !categoryKey || normalizeLabel(transaction.categoria).toLowerCase().includes(categoryKey);
+        const matchesSubcategory = !subcategoryKey || normalizeLabel(transaction.subcategoria).toLowerCase().includes(subcategoryKey);
+        return matchesType && matchesCategory && matchesSubcategory;
+      });
+    },
+    [dateFrom, dateTo, historyCategory, historyOpen, historySubcategory, historyType, transactions],
   );
 
   return (
@@ -1922,32 +1942,69 @@ function TransactionsView({
         <Datalist id="description-options" options={suggestions.descriptions} />
       </form>
 
-      <section className="transaction-list-panel">
-        <form className="transaction-search">
-          <div className="date-search">
-            <label>
-              From
-              <input onChange={(event) => setDateFrom(event.currentTarget.value)} type="date" value={dateFrom} />
-            </label>
-            <label>
-              To
-              <input onChange={(event) => setDateTo(event.currentTarget.value)} type="date" value={dateTo} />
-            </label>
-          </div>
-          <label>
-            Keyword
-            <input
-              onChange={(event) => setKeyword(event.currentTarget.value)}
-              placeholder="Subcategory or description"
-              value={keyword}
-            />
-          </label>
-          <div className="filter-count">
-            {filteredTransactions.length} of {transactions.length}
-          </div>
-        </form>
+      <section className="transaction-history-launch">
+        <button className="secondary-button" onClick={() => setHistoryOpen(true)} type="button">
+          <ReceiptText size={18} />
+          Transaction history
+        </button>
+        <span>{transactions.length} saved transactions</span>
       </section>
-      <TransactionsTable transactions={filteredTransactions} onRemove={onRemove} onUpdate={onUpdate} />
+
+      {historyOpen ? (
+        <div className="history-overlay" role="presentation">
+          <section aria-label="Transaction history" className="history-dialog">
+            <div className="history-header">
+              <div>
+                <h3>Transaction history</h3>
+                <p>{filteredTransactions.length} of {transactions.length}</p>
+              </div>
+              <button aria-label="Close transaction history" className="history-close" onClick={() => setHistoryOpen(false)} type="button">
+                <X size={18} />
+              </button>
+            </div>
+            <form className="transaction-search">
+              <div className="date-search">
+                <label>
+                  From
+                  <input onChange={(event) => setDateFrom(event.currentTarget.value)} type="date" value={dateFrom} />
+                </label>
+                <label>
+                  To
+                  <input onChange={(event) => setDateTo(event.currentTarget.value)} type="date" value={dateTo} />
+                </label>
+              </div>
+              <label>
+                Type
+                <select onChange={(event) => setHistoryType(event.currentTarget.value)} value={historyType}>
+                  <option value="">All</option>
+                  {transactionTypes.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Category
+                <input
+                  list="category-options"
+                  onChange={(event) => setHistoryCategory(event.currentTarget.value)}
+                  placeholder="TC"
+                  value={historyCategory}
+                />
+              </label>
+              <label>
+                Subcategory
+                <input
+                  list="subcategory-options"
+                  onChange={(event) => setHistorySubcategory(event.currentTarget.value)}
+                  placeholder="Personal"
+                  value={historySubcategory}
+                />
+              </label>
+            </form>
+            <TransactionsTable transactions={filteredTransactions} onRemove={onRemove} onUpdate={onUpdate} />
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -340,9 +340,86 @@ select {
   padding: 12px;
 }
 
+.transaction-history-launch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.transaction-history-launch span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(16 16 20 / 0.52);
+}
+
+.history-dialog {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 14px;
+  width: min(1120px, 100%);
+  max-height: min(760px, calc(100vh - 40px));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 20px 50px rgb(0 0 0 / 0.24);
+}
+
+.history-dialog .table-wrap {
+  overflow: auto;
+}
+
+.history-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.history-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.history-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+}
+
 .transaction-search {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(240px, 1.4fr) minmax(130px, 0.75fr) repeat(2, minmax(160px, 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -1439,8 +1516,28 @@ tr:last-child td {
   .quick-entry,
   .entry-form,
   .report-controls,
-  .transaction-list-panel {
+  .transaction-list-panel,
+  .history-dialog {
     padding: 16px;
+  }
+
+  .transaction-history-launch {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .transaction-history-launch .secondary-button {
+    width: 100%;
+  }
+
+  .history-overlay {
+    align-items: stretch;
+    padding: 10px;
+  }
+
+  .history-dialog {
+    width: 100%;
+    max-height: calc(100vh - 20px);
   }
 
   .transaction-search,
