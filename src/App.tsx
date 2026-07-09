@@ -1232,7 +1232,6 @@ function Dashboard({
         <div className="metric-grid">
           <Metric label="Month income" value={formatCurrency(currentMonthReport.totals.income)} tone="positive" />
           <Metric label="Month expenses" value={formatCurrency(currentMonthReport.totals.expenses)} tone="negative" />
-          <Metric label="Month savings" value={formatCurrency(currentMonthReport.totals.savings)} tone="neutral" />
           <Metric
             label="Month net flow"
             value={formatCurrency(currentMonthReport.totals.netFlow)}
@@ -2054,7 +2053,6 @@ function ReportsView({
       <div className="metric-grid">
         <Metric label="Income" value={formatCurrency(report.totals.income)} tone="positive" />
         <Metric label="Expenses" value={formatCurrency(report.totals.expenses)} tone="negative" />
-        <Metric label="Savings" value={formatCurrency(report.totals.savings)} tone="neutral" />
         <Metric
           label="Net flow"
           value={formatCurrency(report.totals.netFlow)}
