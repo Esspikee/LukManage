@@ -2069,13 +2069,11 @@ function ReportsView({
           <Metric label="Transactions" value={comparison.transactionCount.toString()} tone="neutral" />
           <Metric label="Avg monthly expenses" value={formatCurrency(comparison.averageMonthlyExpenses)} tone="negative" />
           <Metric label="Debt payments" value={formatCurrency(comparison.debtPayments)} tone="neutral" />
-          <Metric label="Savings rate" value={`${comparison.savingsRate}%`} tone={comparison.savingsRate > 0 ? "positive" : "neutral"} />
         </div>
         <div className="insight-grid">
           <ReportInsight label="Top expense" value={comparison.topExpenseCategory ? `${comparison.topExpenseCategory.name} / ${formatCurrency(comparison.topExpenseCategory.value)}` : "No expenses"} />
           <ReportInsight label="Expenses vs previous" value={formatSignedCurrency(comparison.expenseChange)} tone={comparison.expenseChange <= 0 ? "positive" : "negative"} />
           <ReportInsight label="Income vs previous" value={formatSignedCurrency(comparison.incomeChange)} tone={comparison.incomeChange >= 0 ? "positive" : "negative"} />
-          <ReportInsight label="Savings vs previous" value={formatSignedCurrency(comparison.savingsChange)} tone={comparison.savingsChange >= 0 ? "positive" : "negative"} />
           <ReportInsight label="Net flow vs previous" value={formatSignedCurrency(comparison.netFlowChange)} tone={comparison.netFlowChange >= 0 ? "positive" : "negative"} />
           <ReportInsight label="Compared with" value={comparison.previousLabel} />
         </div>
