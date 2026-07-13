@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -11,6 +11,7 @@ import {
   Forward,
   Landmark,
   LayoutDashboard,
+  Mic,
   Plus,
   ReceiptText,
   Scale,
@@ -90,6 +91,7 @@ import {
   uniqueSorted,
 } from "./finance";
 import type { BudgetProgress, CategoryUsage, DebtOverview, ForecastData, HealthIssue, ReportComparison, ReportData, ReportPeriod } from "./finance";
+import { parseVoiceTransaction, type VoiceTransactionDraft } from "./voice";
 
 type Section = "past" | "current" | "future" | "settings";
 type CurrentSub = "overview" | "transactions" | "budgets" | "categories";
@@ -254,12 +256,13 @@ export function App() {
       ...state.transactions.map((transaction) => transaction.categoria),
       ...state.budgets.map((budget) => budget.category),
       ...state.recurringPayments.map((payment) => payment.category),
+      ...state.debts.map((debt) => debt.linkedCategory || ""),
     ]);
     const subcategories = uniqueSorted(state.transactions.map((transaction) => transaction.subcategoria));
     const descriptions = uniqueSorted(state.transactions.map((transaction) => transaction.descripcion));
 
     return { categories, descriptions, subcategories };
-  }, [state.budgets, state.categories, state.recurringPayments, state.transactions]);
+  }, [state.budgets, state.categories, state.debts, state.recurringPayments, state.transactions]);
 
   const report = useMemo(
     () => buildReport(state.transactions, reportMonth, reportPeriod, state.categories),
@@ -378,6 +381,25 @@ export function App() {
       return;
     }
     focusFormField(formElement, "categoria");
+  }
+
+  function addVoiceTransaction(draft: VoiceTransactionDraft) {
+    setState((current) => {
+      const transaction = createTransaction({
+        fecha: todayIso(),
+        gastoIngresoAhorro: draft.gastoIngresoAhorro,
+        categoria: draft.categoria,
+        subcategoria: draft.subcategoria,
+        descripcion: draft.descripcion,
+        monto: draft.monto,
+      });
+      return {
+        ...current,
+        debts: applyTransactionToDebts(current.debts, transaction),
+        savingsAccounts: applyTransactionToSavingsAccounts(current.savingsAccounts, transaction),
+        transactions: [transaction, ...current.transactions],
+      };
+    });
   }
 
   function addBudget(event: FormEvent<HTMLFormElement>) {
@@ -983,6 +1005,7 @@ export function App() {
               <TransactionsView
                 transactions={state.transactions}
                 onAdd={addTransaction}
+                onVoiceAdd={addVoiceTransaction}
                 onRemove={removeTransaction}
                 onUpdate={updateTransaction}
                 suggestions={suggestions}
@@ -1850,14 +1873,97 @@ function CreditCardPanel({
   );
 }
 
+function VoiceTransactionEntry({
+  onKeep,
+  suggestions,
+}: {
+  onKeep: (draft: VoiceTransactionDraft) => void;
+  suggestions: { categories: string[]; descriptions: string[]; subcategories: string[] };
+}) {
+  const [draft, setDraft] = useState<VoiceTransactionDraft | null>(null);
+  const [message, setMessage] = useState("");
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<{ stop: () => void } | null>(null);
+
+  const listen = () => {
+    type Recognition = { continuous: boolean; lang: string; interimResults: boolean; maxAlternatives: number; start: () => void; stop: () => void; onend: (() => void) | null; onerror: ((event: { error: string }) => void) | null; onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null };
+    type RecognitionConstructor = new () => Recognition;
+    const recognitionWindow = window as Window & { SpeechRecognition?: RecognitionConstructor; webkitSpeechRecognition?: RecognitionConstructor };
+    const RecognitionApi = recognitionWindow.SpeechRecognition || recognitionWindow.webkitSpeechRecognition;
+    if (!RecognitionApi) {
+      setMessage("Voice input is not supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+    setDraft(null);
+    setMessage("Listening: say Gasto or Ingreso, category, subcategory, description, then amount.");
+    setListening(true);
+    const recognition = new RecognitionApi();
+    recognitionRef.current = recognition;
+    recognition.lang = "es-CO";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    let latestTranscript = "";
+    recognition.onresult = (event) => {
+      latestTranscript = Array.from(event.results).map((result) => result[0]?.transcript || "").join(" ").trim();
+      if (latestTranscript) setMessage(`Heard: “${latestTranscript}”`);
+    };
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+      if (!latestTranscript) return;
+      const transcript = latestTranscript;
+      const parsed = parseVoiceTransaction(transcript, suggestions.categories, suggestions.subcategories);
+      if ("error" in parsed) setMessage(`${parsed.error} Heard: “${transcript}”`);
+      else {
+        setDraft(parsed);
+        setMessage("Review the transaction before saving.");
+      }
+    };
+    recognition.onerror = (event) => setMessage(event.error === "not-allowed" ? "Microphone permission was denied." : "I could not hear a complete transaction. Try again.");
+    recognition.start();
+  };
+
+  return (
+    <section className="panel voice-entry">
+      <div className="panel-title">
+        <Mic size={18} />
+        <h3>Voice transaction</h3>
+      </div>
+      <div className="button-row">
+        <button className="primary-button" disabled={listening || Boolean(draft)} onClick={listen} type="button">
+          <Mic size={18} />
+          {listening ? "Listening…" : "Start voice entry"}
+        </button>
+        {listening ? <button className="secondary-button" onClick={() => recognitionRef.current?.stop()} type="button">Stop listening</button> : null}
+      </div>
+      {draft ? (
+        <>
+          <div className="voice-draft" aria-label="Voice transaction draft">
+            <span>Draft</span>
+            <p>{draft.gastoIngresoAhorro} · {draft.categoria} · {draft.subcategoria} · {draft.descripcion} · {formatCurrency(draft.monto)}</p>
+          </div>
+          <div className="button-row">
+            <button className="primary-button" onClick={() => { onKeep(draft); setDraft(null); setMessage("Transaction saved."); }} type="button">Keep</button>
+            <button className="secondary-button" onClick={listen} type="button">Re-do</button>
+          </div>
+        </>
+      ) : null}
+      {message ? <p className="panel-copy">{message}</p> : null}
+    </section>
+  );
+}
+
 function TransactionsView({
   onAdd,
+  onVoiceAdd,
   onRemove,
   onUpdate,
   suggestions,
   transactions,
 }: {
   onAdd: (event: FormEvent<HTMLFormElement>) => void;
+  onVoiceAdd: (draft: VoiceTransactionDraft) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, patch: Partial<Transaction>) => void;
   suggestions: {
@@ -1892,6 +1998,7 @@ function TransactionsView({
 
   return (
     <div className="stack">
+      <VoiceTransactionEntry onKeep={onVoiceAdd} suggestions={suggestions} />
       <form className="entry-form transaction-form" onSubmit={onAdd}>
         <label>
           Fecha
