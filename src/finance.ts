@@ -177,48 +177,105 @@ export function createEmptyState(): FinanceState {
 }
 
 export function createSampleState(): FinanceState {
+  const dateForMonth = (monthsAgo: number, day: number) => {
+    const date = new Date();
+    date.setDate(1);
+    date.setMonth(date.getMonth() - monthsAgo);
+    date.setDate(Math.min(day, new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
+    return date.toISOString().slice(0, 10);
+  };
   const month = todayIso().slice(0, 7);
-  const previousMonthDate = new Date();
-  previousMonthDate.setMonth(previousMonthDate.getMonth() - 1);
-  const previousMonth = previousMonthDate.toISOString().slice(0, 7);
+  const transactions: Transaction[] = [];
+  const addTransaction = (monthsAgo: number, day: number, type: TransactionType, category: string, subcategory: string, description: string, amount: number) => {
+    transactions.push(createTransaction({
+      categoria: category,
+      descripcion: description,
+      fecha: dateForMonth(monthsAgo, day),
+      gastoIngresoAhorro: type,
+      monto: amount,
+      subcategoria: subcategory,
+    }));
+  };
+
+  // A year of realistic-looking activity makes every report period, chart,
+  // filter, budget state, debt, and credit-card view useful on first load.
+  for (let monthsAgo = 11; monthsAgo >= 0; monthsAgo -= 1) {
+    const variation = (11 - monthsAgo) * 12000;
+    addTransaction(monthsAgo, 1, "Ingreso", "Salary", "Main job", "Monthly salary", 5200000);
+    addTransaction(monthsAgo, 3, "Gasto", "Rent", "Housing", "Apartment rent", 1350000);
+    addTransaction(monthsAgo, 8, "Gasto", "Groceries", "Supermarket", "Weekly groceries", 210000 + variation);
+    addTransaction(monthsAgo, 12, "Gasto", "Transport", "Fuel", "Fuel and transit", 115000 + (monthsAgo % 3) * 10000);
+    addTransaction(monthsAgo, 16, "Gasto", "Utilities", "Home", "Internet and utilities", 185000);
+    addTransaction(monthsAgo, 19, "Gasto", "Visa Card", "Online shopping", "Online purchase", 95000 + (monthsAgo % 4) * 15000);
+    addTransaction(monthsAgo, 22, "Gasto", "Dining", "Restaurant", "Dinner with friends", 78000 + (monthsAgo % 2) * 22000);
+    if (monthsAgo % 2 === 0) addTransaction(monthsAgo, 25, "Ingreso", "Freelance", "Design", "Freelance project", 680000);
+    if (monthsAgo % 3 === 0) addTransaction(monthsAgo, 27, "Gasto", "Health", "Pharmacy", "Pharmacy purchase", 62000);
+  }
+
+  // Current-month items expose overdue, near-limit, and planned-payment states.
+  addTransaction(0, 9, "Gasto", "Groceries", "Supermarket", "Monthly grocery top-up", 320000);
+  addTransaction(0, 14, "Gasto", "Debt", "Education loan", "Education loan payment", 280000);
 
   return {
     budgets: [
-      createBudget({ category: "Personal", monthlyLimit: 700000 }),
+      createBudget({ category: "Groceries", monthlyLimit: 500000 }),
       createBudget({ category: "Transport", monthlyLimit: 250000 }),
+      createBudget({ category: "Dining", monthlyLimit: 140000 }),
+      createBudget({ category: "Entertainment", monthlyLimit: 120000 }),
     ],
     categories: [
-      createCategory({ color: "#D4AF37", name: "Salary", type: "Ingreso" }),
-      createCategory({ color: "#B33030", name: "Personal", type: "Gasto" }),
+      createCategory({ color: "#57B981", name: "Salary", type: "Ingreso" }),
+      createCategory({ color: "#39A0ED", name: "Freelance", type: "Ingreso" }),
+      createCategory({ color: "#B33030", name: "Rent", type: "Gasto" }),
+      createCategory({ color: "#E85D75", name: "Groceries", type: "Gasto" }),
       createCategory({ color: "#2A5699", name: "Transport", type: "Gasto" }),
-      createCategory({ color: "#2E7D32", name: "Savings", type: "Ahorro" }),
-      createCategory({ color: "#8C6A1A", name: "Rent", type: "Gasto" }),
+      createCategory({ color: "#8C6A1A", name: "Utilities", type: "Gasto" }),
+      createCategory({ color: "#9B59B6", name: "Dining", type: "Gasto" }),
+      createCategory({ color: "#EF8D32", name: "Entertainment", type: "Gasto" }),
+      createCategory({ color: "#D75A4A", name: "Health", type: "Gasto" }),
+      createCategory({ color: "#1A5FB4", name: "Visa Card", type: "Gasto" }),
     ],
     savingsAccounts: [
-      createSavingsAccount({ bankName: "Lulo Bank", balance: 2800000 }),
-      createSavingsAccount({ bankName: "Davivienda", balance: 1200000 }),
+      createSavingsAccount({ bankName: "Lulo Bank", balance: 5800000 }),
+      createSavingsAccount({ bankName: "Davivienda", balance: 2150000 }),
+      createSavingsAccount({ bankName: "Emergency savings", balance: 3400000 }),
     ],
     debts: [
       createDebt({
-        name: "Credit card",
-        currentBalance: 950000,
-        monthlyPayment: 300000,
-        dueDate: `${month}-20`,
-        notes: "Sample debt",
+        name: "Education loan",
+        currentBalance: 7800000,
+        monthlyPayment: 280000,
+        dueDate: `${month}-14`,
+        notes: "Demo installment loan",
+      }),
+      createDebt({
+        name: "Visa Signature",
+        currentBalance: 0,
+        monthlyPayment: 350000,
+        dueDate: `${month}-24`,
+        notes: "Demo credit card linked to Visa Card purchases",
+        isCreditCard: true,
+        linkedCategory: "Visa Card",
+        cutoffDay: 18,
+        payments: [
+          createCardPayment({ amount: 250000, date: dateForMonth(2, 24) }),
+          createCardPayment({ amount: 300000, date: dateForMonth(1, 24) }),
+          createCardPayment({ amount: 200000, date: dateForMonth(0, 4) }),
+        ],
       }),
     ],
     recurringPayments: [
       createRecurringPayment({
         active: true,
-        amount: 4200000,
+        amount: 5200000,
         category: "Salary",
-        dueDay: 30,
+        dueDay: 1,
         name: "Salary",
         type: "Ingreso",
       }),
       createRecurringPayment({
         active: true,
-        amount: 1100000,
+        amount: 1350000,
         category: "Rent",
         dueDay: 1,
         name: "Rent",
@@ -226,55 +283,22 @@ export function createSampleState(): FinanceState {
       }),
       createRecurringPayment({
         active: true,
-        amount: 500000,
-        category: "Savings",
+        amount: 185000,
+        category: "Utilities",
         dueDay: 5,
-        name: "Apartment savings",
-        type: "Ahorro",
+        name: "Utilities",
+        type: "Gasto",
+      }),
+      createRecurringPayment({
+        active: false,
+        amount: 45000,
+        category: "Entertainment",
+        dueDay: 9,
+        name: "Streaming subscription",
+        type: "Gasto",
       }),
     ],
-    transactions: [
-      createTransaction({
-        categoria: "Salary",
-        descripcion: "Monthly salary",
-        fecha: `${month}-01`,
-        gastoIngresoAhorro: "Ingreso",
-        monto: 4200000,
-        subcategoria: "Main",
-      }),
-      createTransaction({
-        categoria: "Personal",
-        descripcion: "Groceries",
-        fecha: `${month}-03`,
-        gastoIngresoAhorro: "Gasto",
-        monto: 180000,
-        subcategoria: "Food",
-      }),
-      createTransaction({
-        categoria: "Transport",
-        descripcion: "Gas",
-        fecha: `${month}-06`,
-        gastoIngresoAhorro: "Gasto",
-        monto: 85000,
-        subcategoria: "Moto",
-      }),
-      createTransaction({
-        categoria: "Savings",
-        descripcion: "Apartment fund",
-        fecha: `${month}-07`,
-        gastoIngresoAhorro: "Ahorro",
-        monto: 500000,
-        subcategoria: "Goal",
-      }),
-      createTransaction({
-        categoria: "Personal",
-        descripcion: "Dinner",
-        fecha: `${previousMonth}-22`,
-        gastoIngresoAhorro: "Gasto",
-        monto: 95000,
-        subcategoria: "Food",
-      }),
-    ],
+    transactions,
   };
 }
 
