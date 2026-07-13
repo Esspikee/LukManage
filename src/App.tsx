@@ -239,16 +239,11 @@ export function App() {
     const totalExpenses = state.transactions
       .filter((transaction) => transaction.gastoIngresoAhorro === "Gasto")
       .reduce((sum, transaction) => sum + transaction.monto, 0);
-    const totalSavedFromTransactions = state.transactions
-      .filter((transaction) => transaction.gastoIngresoAhorro === "Ahorro")
-      .reduce((sum, transaction) => sum + transaction.monto, 0);
-
     return {
       totalSavings,
       totalDebt,
       totalIncome,
       totalExpenses,
-      totalSavedFromTransactions,
       netPosition: totalSavings - totalDebt,
     };
   }, [state]);
@@ -1155,7 +1150,6 @@ function Dashboard({
     totalDebt: number;
     totalIncome: number;
     totalExpenses: number;
-    totalSavedFromTransactions: number;
     netPosition: number;
   };
   transactions: Transaction[];
@@ -1163,12 +1157,10 @@ function Dashboard({
   const lifetimeFlowData = [
     { name: "Ingreso", value: totals.totalIncome },
     { name: "Gasto", value: totals.totalExpenses },
-    { name: "Ahorro", value: totals.totalSavedFromTransactions },
   ];
   const currentMonthFlowData = [
     { name: "Ingreso", value: currentMonthReport.totals.income },
     { name: "Gasto", value: currentMonthReport.totals.expenses },
-    { name: "Ahorro", value: currentMonthReport.totals.savings },
   ];
   const setupItems: SetupItem[] = [
     {
@@ -1213,7 +1205,7 @@ function Dashboard({
     <div className="stack">
       <Header eyebrow={null} title="Dashboard" subtitle="Your current position and this month's movement." />
       {!setupComplete ? <SetupChecklist items={setupItems} onNavigate={onNavigate} /> : null}
-      <div className="metric-grid">
+      <div className="metric-grid dashboard-summary">
         <Metric label="Bank balance" value={formatCurrency(totals.totalSavings)} tone="positive" />
         <Metric label="Total debt" value={formatCurrency(totals.totalDebt)} tone="negative" />
         <Metric label="Net position" value={formatCurrency(totals.netPosition)} tone={totals.netPosition >= 0 ? "positive" : "negative"} />
@@ -1229,7 +1221,7 @@ function Dashboard({
           <h3>Current month</h3>
           <span>{currentMonthReport.label}</span>
         </div>
-        <div className="metric-grid">
+        <div className="metric-grid dashboard-summary">
           <Metric label="Month income" value={formatCurrency(currentMonthReport.totals.income)} tone="positive" />
           <Metric label="Month expenses" value={formatCurrency(currentMonthReport.totals.expenses)} tone="negative" />
           <Metric
@@ -1237,8 +1229,23 @@ function Dashboard({
             value={formatCurrency(currentMonthReport.totals.netFlow)}
             tone={currentMonthReport.totals.netFlow >= 0 ? "positive" : "negative"}
           />
+          <Metric label="Transactions" value={currentMonthReport.filteredTransactions.length.toString()} tone="neutral" />
         </div>
       </section>
+
+      <BudgetSummary progress={budgetProgress} onNavigate={onNavigate} />
+
+      <ChartPanel title="Lifetime transaction totals" empty={transactions.length === 0}>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={lifetimeFlowData}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="name" />
+            <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
+            <Tooltip formatter={(value) => formatCurrency(Number(value))} />
+            <Bar dataKey="value" fill={chartGold} radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartPanel>
 
       <ChartPanel title="Debt by name" empty={debts.length === 0}>
         <ResponsiveContainer width="100%" height={260}>
@@ -1280,20 +1287,6 @@ function Dashboard({
           </ResponsiveContainer>
         </ChartPanel>
       </div>
-
-      <BudgetSummary progress={budgetProgress} onNavigate={onNavigate} />
-
-      <ChartPanel title="Lifetime transaction totals" empty={transactions.length === 0}>
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={lifetimeFlowData}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="name" />
-            <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
-            <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-            <Bar dataKey="value" fill={chartGold} radius={[6, 6, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartPanel>
     </div>
   );
 }
@@ -2026,7 +2019,6 @@ function ReportsView({
   const flowData = [
     { name: "Ingreso", value: report.totals.income },
     { name: "Gasto", value: report.totals.expenses },
-    { name: "Ahorro", value: report.totals.savings },
   ];
 
   return (
@@ -2050,7 +2042,7 @@ function ReportsView({
         <div className="report-label">{report.label}</div>
       </form>
 
-      <div className="metric-grid">
+      <div className="metric-grid dashboard-summary">
         <Metric label="Income" value={formatCurrency(report.totals.income)} tone="positive" />
         <Metric label="Expenses" value={formatCurrency(report.totals.expenses)} tone="negative" />
         <Metric
@@ -2058,6 +2050,7 @@ function ReportsView({
           value={formatCurrency(report.totals.netFlow)}
           tone={report.totals.netFlow >= 0 ? "positive" : "negative"}
         />
+        <Metric label="Transactions" value={comparison.transactionCount.toString()} tone="neutral" />
       </div>
 
       <section className="panel report-review">
@@ -2065,7 +2058,7 @@ function ReportsView({
           <Scale size={18} />
           <h3>Period review</h3>
         </div>
-        <div className="metric-grid compact-metrics">
+        <div className="period-review-summary">
           <Metric label="Transactions" value={comparison.transactionCount.toString()} tone="neutral" />
           <Metric label="Avg monthly expenses" value={formatCurrency(comparison.averageMonthlyExpenses)} tone="negative" />
           <Metric label="Debt payments" value={formatCurrency(comparison.debtPayments)} tone="neutral" />
@@ -2088,10 +2081,9 @@ function ReportsView({
               <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
               <Tooltip formatter={(value) => formatCurrency(Number(value))} />
               <Legend />
-              <Bar dataKey="income" fill={chartColors[1]} name="Income" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="expenses" fill={chartColors[2]} name="Expenses" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="savings" fill={chartColors[3]} name="Savings" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="netFlow" fill={chartColors[0]} name="Net flow" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="income" fill="#57B981" name="Income" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="expenses" fill="#EF4444" name="Expenses" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="netFlow" fill="#3B82F6" name="Net flow" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartPanel>
@@ -2169,7 +2161,7 @@ function FutureView({
   return (
     <div className="stack">
       <Header eyebrow={null} title="Future" />
-      <div className="metric-grid">
+      <div className="metric-grid dashboard-summary">
         <Metric label="Starting balance" value={formatCurrency(forecast.startingSavings)} tone="positive" />
         <Metric label="Expected income" value={formatCurrency(forecast.recurringIncome)} tone="positive" />
         <Metric label="Expected outflow" value={formatCurrency(forecast.recurringExpenses + forecast.recurringSavings + forecast.debtPayments)} tone="negative" />

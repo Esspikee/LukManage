@@ -268,6 +268,78 @@ select {
   gap: 16px;
 }
 
+/* The dashboard's four primary numbers are one financial snapshot, so they
+   share a single surface instead of looking like four unrelated cards. */
+.dashboard-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.dashboard-summary .metric {
+  min-height: 116px;
+  border: 0;
+  border-radius: 0;
+  border-left: 3px solid var(--info);
+  background: transparent;
+}
+
+.dashboard-summary .metric.positive {
+  border-left-color: var(--positive);
+}
+
+.dashboard-summary .metric.negative {
+  border-left-color: var(--negative);
+}
+
+.dashboard-summary .metric:nth-child(odd) {
+  border-right: 1px solid var(--line);
+}
+
+.dashboard-summary .metric:nth-child(-n + 2) {
+  border-bottom: 1px solid var(--line);
+}
+
+/* The period review gives its key monthly expense figure a larger, dedicated
+   right column while keeping the supporting counts together on the left. */
+.period-review-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.period-review-summary .metric {
+  min-height: 92px;
+  border: 0;
+  border-radius: 0;
+  border-left: 3px solid var(--info);
+  background: transparent;
+}
+
+.period-review-summary .metric.negative {
+  border-left-color: var(--negative);
+}
+
+.period-review-summary .metric:nth-child(1) {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.period-review-summary .metric:nth-child(2) {
+  grid-row: span 2;
+}
+
+.period-review-summary .metric:nth-child(3) {
+  border-right: 1px solid var(--line);
+}
+
 .chart-grid,
 .backup-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1430,6 +1502,14 @@ tr:last-child td {
   .recurring-form,
   .transaction-form {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .period-review-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .wide {
