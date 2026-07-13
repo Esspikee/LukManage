@@ -1537,6 +1537,20 @@ tr:last-child td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .subnav.current-subnav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .subnav .tab.phone-icon-only {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 8px;
+  }
+
+  .subnav .tab.phone-icon-only > span:not(.tab-badge) {
+    display: none;
+  }
+
   .period-review-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1581,6 +1595,20 @@ tr:last-child td {
   .subnav {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .subnav.current-subnav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .subnav .tab.phone-icon-only {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 8px;
+  }
+
+  .subnav .tab.phone-icon-only > span:not(.tab-badge) {
+    display: none;
   }
 
   .content {

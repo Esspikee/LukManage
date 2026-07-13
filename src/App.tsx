@@ -983,11 +983,11 @@ export function App() {
         <div className={activeSection === "settings" ? undefined : "section-animate"} key={activeSection}>
         {activeSection === "current" && (
           <>
-            <nav className="subnav" aria-label="Current month sections">
-              <TabButton icon={<LayoutDashboard size={16} />} label="Overview" tab="overview" active={currentSub} onClick={setCurrentSub} />
-              <TabButton icon={<ReceiptText size={16} />} label="Transactions" tab="transactions" active={currentSub} onClick={setCurrentSub} />
-              <TabButton icon={<BarChart3 size={16} />} label="Budgets" tab="budgets" active={currentSub} onClick={setCurrentSub} />
-              <TabButton icon={<Tags size={16} />} label="Categories" tab="categories" active={currentSub} onClick={setCurrentSub} />
+            <nav className="subnav current-subnav" aria-label="Current month sections">
+              <TabButton icon={<LayoutDashboard size={16} />} label="Overview" phoneIconOnly tab="overview" active={currentSub} onClick={setCurrentSub} />
+              <TabButton icon={<Plus size={18} />} label="Transactions" phoneIconOnly tab="transactions" active={currentSub} onClick={setCurrentSub} />
+              <TabButton icon={<BarChart3 size={16} />} label="Budgets" phoneIconOnly tab="budgets" active={currentSub} onClick={setCurrentSub} />
+              <TabButton icon={<Tags size={16} />} label="Categories" phoneIconOnly tab="categories" active={currentSub} onClick={setCurrentSub} />
             </nav>
             {currentSub === "overview" && (
               <Dashboard
@@ -1127,6 +1127,7 @@ function TabButton<T extends string>({
   iconOnly = false,
   label,
   onClick,
+  phoneIconOnly = false,
   tab,
 }: {
   active: T;
@@ -1135,13 +1136,14 @@ function TabButton<T extends string>({
   iconOnly?: boolean;
   label: string;
   onClick: (tab: T) => void;
+  phoneIconOnly?: boolean;
   tab: T;
 }) {
   return (
     <button
-      aria-label={iconOnly ? label : undefined}
+      aria-label={iconOnly || phoneIconOnly ? label : undefined}
       aria-pressed={active === tab}
-      className={`${active === tab ? "tab active" : "tab"}${iconOnly ? " icon-only" : ""}`}
+      className={`${active === tab ? "tab active" : "tab"}${iconOnly ? " icon-only" : ""}${phoneIconOnly ? " phone-icon-only" : ""}`}
       onClick={() => onClick(tab)}
       type="button"
     >
@@ -1478,7 +1480,7 @@ function BudgetsView({
 }) {
   return (
     <div className="stack">
-      <Header eyebrow="Phase 2" title="Budgets" subtitle="Set monthly category limits and watch current-month progress." />
+      <Header eyebrow={null} title="Budgets" subtitle="Set monthly category limits and watch current-month progress." />
       <form className="entry-form" onSubmit={onAdd}>
         <label>
           Category
@@ -1538,7 +1540,7 @@ function CategoriesView({
 
   return (
     <div className="stack">
-      <Header eyebrow="Phase 2" title="Categories" subtitle="The official category list for transactions, budgets, reports, and cards." />
+      <Header eyebrow={null} title="Categories" subtitle="The official category list for transactions, budgets, reports, and cards." />
       <form className="entry-form category-form" onSubmit={onAdd}>
         <label>
           Name
@@ -2424,7 +2426,7 @@ function InstallView({
 }) {
   return (
     <div className="stack">
-      <Header eyebrow="Phase 2" title="Install" subtitle="Phone app status for this device." />
+      <Header eyebrow={null} title="Install" subtitle="Phone app status for this device." />
       <div className="metric-grid">
         <Metric label="App mode" value={isStandalone ? "Installed" : "Browser"} tone={isStandalone ? "positive" : "neutral"} />
         <Metric label="Network" value={isOnline ? "Online" : "Offline"} tone={isOnline ? "positive" : "neutral"} />
