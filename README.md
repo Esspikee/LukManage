@@ -78,6 +78,85 @@ $env:Path = 'C:\Users\laura\.cache\codex-runtimes\codex-primary-runtime\dependen
 & 'C:\Users\laura\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\pnpm.cmd' build
 ```
 
+## Android APK (local-only)
+
+LukManage can be bundled as a Capacitor Android app. The APK contains the built
+web app, so normal use does not need GitHub Pages, a backend, an API key, or an
+internet connection. The Android app uses its own device-local storage.
+
+### Before moving from GitHub Pages
+
+The installed APK cannot read the finance records stored by the GitHub Pages
+browser app. Before installing it on your phone:
+
+1. In the GitHub Pages app, use **Settings → Backup → Download JSON**.
+2. Install the APK.
+3. In the APK, use **Settings → Backup → Restore JSON**.
+4. Verify your balances, debts, transactions, budgets, and categories before
+   relying on the APK.
+
+Keep JSON backups somewhere you control. Local-only data can be lost if the
+phone is reset, the app is uninstalled, or the device is lost.
+
+Android backup is left enabled by default (`android:allowBackup="true"`) so the
+device owner can choose to use Android’s backup facilities. For stricter
+phone-only storage, set it to `false` in `android/app/src/main/AndroidManifest.xml`;
+doing so makes your manual JSON backup the only recovery path.
+
+### Android development
+
+Install Android Studio and its Android SDK, then connect an Android phone with
+USB debugging enabled. The native project is committed in `android/`; do not
+commit `android/local.properties`, signing keys, APKs, AABs, or personal
+backups.
+
+```powershell
+# Build the assets with Android-safe relative URLs (no GitHub Pages base path)
+pnpm run build:android
+
+# Copy the build into the native Android project and sync Capacitor plugins
+pnpm run android:sync
+
+# Regenerate launcher and splash artwork from resources/
+pnpm run android:assets
+
+# Open the native project in Android Studio
+pnpm run android:open
+
+# Or build, sync, and run on a connected phone/emulator
+pnpm run android:run
+
+# Build an unsigned debug APK after syncing (Windows)
+cd android
+.\gradlew.bat assembleDebug
+```
+
+In Android Studio, use **Run** for development. For a personal install, use
+**Build → Generate Signed Bundle / APK → APK** and keep the generated signing
+key backed up securely; the same key is required to install future updates over
+an existing installation.
+
+The debug APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
+For a release APK, use Android Studio's signing wizard above instead of committing
+keys or passwords to this repository.
+
+The Android launcher and splash screens are generated from `resources/icon.png`
+and `resources/splash.png`, which are based on the existing LukManage icon.
+Update those source assets and run `pnpm run android:assets` before committing a
+new native visual identity.
+
+The Android build disables the web PWA service worker because assets are bundled
+inside the APK. The GitHub Pages build remains available through `pnpm run
+build:web` until you decide to retire it.
+
+### Voice input on Android
+
+The browser build uses the Web Speech API. The Android build uses the native
+Capacitor speech-recognition adapter and asks for microphone permission only
+when voice entry starts. It prefers on-device recognition when the phone and
+Spanish (`es-CO`) support it, then falls back to the Android recognizer. The
+same structured transaction parser and Keep / Re-do review remain in use.
+
 Preview locally:
 
 ```powershell

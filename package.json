@@ -6,12 +6,21 @@
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "pnpm run build:web",
+    "build:web": "tsc && vite build",
+    "build:android": "tsc && vite build --mode android",
+    "android:assets": "capacitor-assets generate --android --iconBackgroundColor '#171721' --splashBackgroundColor '#171721'",
+    "android:sync": "pnpm run build:android && cap sync android",
+    "android:open": "cap open android",
+    "android:run": "pnpm run android:sync && cap run android",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capgo/capacitor-speech-recognition": "^8.1.10",
     "@vitejs/plugin-react": "^4.3.4",
     "idb": "^8.0.3",
     "lucide-react": "^0.468.0",
@@ -21,6 +30,8 @@
     "vite": "^6.0.7"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.4.1",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "typescript": "^5.7.2",

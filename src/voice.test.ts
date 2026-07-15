@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseVoiceTransaction } from "./voice";
+import { buildVoiceContext } from "./voice-recognition";
 
 const categories = ["Personal", "Transport"];
 const subcategories = ["Comida", "Gasolina"];
@@ -30,5 +31,13 @@ describe("parseVoiceTransaction", () => {
   it("requires the expected ordered fields", () => {
     expect(parseVoiceTransaction("personal comida hamburguesa treinta mil", categories, subcategories)).toEqual({ error: "Start with Gasto or Ingreso." });
     expect(parseVoiceTransaction("Gasto personal comida hamburguesa", categories, subcategories)).toEqual({ error: "Say an amount last, for example treinta mil." });
+  });
+});
+
+describe("buildVoiceContext", () => {
+  it("includes transaction commands, TC, and unique known labels", () => {
+    expect(buildVoiceContext(["Personal", "TC"], ["Comida", "Personal"])).toEqual([
+      "Gasto", "Ingreso", "TC", "Personal", "Comida",
+    ]);
   });
 });

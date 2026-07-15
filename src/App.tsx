@@ -92,6 +92,7 @@ import {
 } from "./finance";
 import type { BudgetProgress, CategoryUsage, DebtOverview, ForecastData, HealthIssue, ReportComparison, ReportData, ReportPeriod } from "./finance";
 import { parseVoiceTransaction, type VoiceTransactionDraft } from "./voice";
+import { buildVoiceContext, startVoiceRecognition, type VoiceRecognitionSession } from "./voice-recognition";
 
 type Section = "past" | "current" | "future" | "settings";
 type CurrentSub = "overview" | "transactions" | "budgets" | "categories";
@@ -1885,45 +1886,35 @@ function VoiceTransactionEntry({
   const [draft, setDraft] = useState<VoiceTransactionDraft | null>(null);
   const [message, setMessage] = useState("");
   const [listening, setListening] = useState(false);
-  const recognitionRef = useRef<{ stop: () => void } | null>(null);
+  const recognitionRef = useRef<VoiceRecognitionSession | null>(null);
 
   const listen = () => {
-    type Recognition = { continuous: boolean; lang: string; interimResults: boolean; maxAlternatives: number; start: () => void; stop: () => void; onend: (() => void) | null; onerror: ((event: { error: string }) => void) | null; onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null };
-    type RecognitionConstructor = new () => Recognition;
-    const recognitionWindow = window as Window & { SpeechRecognition?: RecognitionConstructor; webkitSpeechRecognition?: RecognitionConstructor };
-    const RecognitionApi = recognitionWindow.SpeechRecognition || recognitionWindow.webkitSpeechRecognition;
-    if (!RecognitionApi) {
-      setMessage("Voice input is not supported in this browser. Try Chrome or Edge.");
-      return;
-    }
     setDraft(null);
     setMessage("Listening: say Gasto or Ingreso, category, subcategory, description, then amount.");
     setListening(true);
-    const recognition = new RecognitionApi();
-    recognitionRef.current = recognition;
-    recognition.lang = "es-CO";
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    let latestTranscript = "";
-    recognition.onresult = (event) => {
-      latestTranscript = Array.from(event.results).map((result) => result[0]?.transcript || "").join(" ").trim();
-      if (latestTranscript) setMessage(`Heard: “${latestTranscript}”`);
-    };
-    recognition.onend = () => {
-      setListening(false);
-      recognitionRef.current = null;
-      if (!latestTranscript) return;
-      const transcript = latestTranscript;
-      const parsed = parseVoiceTransaction(transcript, suggestions.categories, suggestions.subcategories);
-      if ("error" in parsed) setMessage(`${parsed.error} Heard: “${transcript}”`);
-      else {
-        setDraft(parsed);
-        setMessage("Review the transaction before saving.");
-      }
-    };
-    recognition.onerror = (event) => setMessage(event.error === "not-allowed" ? "Microphone permission was denied." : "I could not hear a complete transaction. Try again.");
-    recognition.start();
+    void startVoiceRecognition({
+      contextualStrings: buildVoiceContext(suggestions.categories, suggestions.subcategories),
+      onEnd: (transcript) => {
+        setListening(false);
+        recognitionRef.current = null;
+        if (!transcript) return;
+        const parsed = parseVoiceTransaction(transcript, suggestions.categories, suggestions.subcategories);
+        if ("error" in parsed) setMessage(`${parsed.error} Heard: “${transcript}”`);
+        else {
+          setDraft(parsed);
+          setMessage("Review the transaction before saving.");
+        }
+      },
+      onError: (error) => setMessage(error),
+      onTranscript: (transcript) => setMessage(`Heard: “${transcript}”`),
+    })
+      .then((session) => {
+        recognitionRef.current = session;
+      })
+      .catch((error: unknown) => {
+        setListening(false);
+        setMessage(error instanceof Error ? error.message : "Voice input could not start.");
+      });
   };
 
   return (
@@ -1937,7 +1928,7 @@ function VoiceTransactionEntry({
           <Mic size={18} />
           {listening ? "Listening…" : "Start voice entry"}
         </button>
-        {listening ? <button className="secondary-button" onClick={() => recognitionRef.current?.stop()} type="button">Stop listening</button> : null}
+        {listening ? <button className="secondary-button" onClick={() => void recognitionRef.current?.stop()} type="button">Stop listening</button> : null}
       </div>
       {draft ? (
         <>

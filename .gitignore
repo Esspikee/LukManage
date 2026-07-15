@@ -10,3 +10,13 @@ dist/
 money-manager-backup-*.json
 finance-backup-*.json
 backup-*.json
+
+# Native Android machine-specific and release artifacts
+android/.gradle/
+android/build/
+android/local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+keystore.properties
