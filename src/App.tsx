@@ -366,7 +366,7 @@ export function App() {
       return {
         ...current,
         debts: applyTransactionToDebts(current.debts, transaction),
-        savingsAccounts: applyTransactionToSavingsAccounts(current.savingsAccounts, transaction),
+        savingsAccounts: applyTransactionToSavingsAccounts(current.savingsAccounts, transaction, current.debts.filter(isCreditCard).map((debt) => debt.linkedCategory)),
         transactions: [transaction, ...current.transactions],
       };
     });
@@ -397,7 +397,7 @@ export function App() {
       return {
         ...current,
         debts: applyTransactionToDebts(current.debts, transaction),
-        savingsAccounts: applyTransactionToSavingsAccounts(current.savingsAccounts, transaction),
+        savingsAccounts: applyTransactionToSavingsAccounts(current.savingsAccounts, transaction, current.debts.filter(isCreditCard).map((debt) => debt.linkedCategory)),
         transactions: [transaction, ...current.transactions],
       };
     });
@@ -588,7 +588,7 @@ export function App() {
       return {
         ...current,
         debts: reverseTransactionFromDebts(current.debts, transaction),
-        savingsAccounts: reverseTransactionFromSavingsAccounts(current.savingsAccounts, transaction),
+        savingsAccounts: reverseTransactionFromSavingsAccounts(current.savingsAccounts, transaction, current.debts.filter(isCreditCard).map((debt) => debt.linkedCategory)),
         transactions: current.transactions.filter((item) => item.id !== id),
       };
     });
@@ -629,12 +629,13 @@ export function App() {
 
       const nextTransaction = { ...previousTransaction, ...patch };
       const revertedDebts = reverseTransactionFromDebts(current.debts, previousTransaction);
-      const revertedSavingsAccounts = reverseTransactionFromSavingsAccounts(current.savingsAccounts, previousTransaction);
+      const creditCardCategories = current.debts.filter(isCreditCard).map((debt) => debt.linkedCategory);
+      const revertedSavingsAccounts = reverseTransactionFromSavingsAccounts(current.savingsAccounts, previousTransaction, creditCardCategories);
 
       return {
         ...current,
         debts: applyTransactionToDebts(revertedDebts, nextTransaction),
-        savingsAccounts: applyTransactionToSavingsAccounts(revertedSavingsAccounts, nextTransaction),
+        savingsAccounts: applyTransactionToSavingsAccounts(revertedSavingsAccounts, nextTransaction, creditCardCategories),
         transactions: current.transactions.map((transaction) => (transaction.id === id ? nextTransaction : transaction)),
       };
     });

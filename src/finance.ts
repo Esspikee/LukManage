@@ -541,36 +541,46 @@ export function transactionKey(transaction: Transaction) {
   ].join("|");
 }
 
-export function applyTransactionToSavingsAccounts(accounts: SavingsAccount[], transaction: Transaction): SavingsAccount[] {
-  if (transaction.gastoIngresoAhorro !== "Ingreso" || transaction.monto <= 0) return accounts;
-
-  const categoryKey = normalizeLabel(transaction.categoria).toLowerCase();
-  if (!categoryKey) return accounts;
-
-  let changed = false;
-  const nextAccounts = accounts.map((account) => {
-    if (normalizeLabel(account.bankName).toLowerCase() !== categoryKey) return account;
-    changed = true;
-    return { ...account, balance: account.balance + transaction.monto };
-  });
-
-  return changed ? nextAccounts : accounts;
+export function applyTransactionToSavingsAccounts(
+  accounts: SavingsAccount[],
+  transaction: Transaction,
+  creditCardCategories: string[] = [],
+): SavingsAccount[] {
+  return updateSavingsAccountsForTransaction(accounts, transaction, creditCardCategories, 1);
 }
 
-export function reverseTransactionFromSavingsAccounts(accounts: SavingsAccount[], transaction: Transaction): SavingsAccount[] {
-  if (transaction.gastoIngresoAhorro !== "Ingreso" || transaction.monto <= 0) return accounts;
+export function reverseTransactionFromSavingsAccounts(
+  accounts: SavingsAccount[],
+  transaction: Transaction,
+  creditCardCategories: string[] = [],
+): SavingsAccount[] {
+  return updateSavingsAccountsForTransaction(accounts, transaction, creditCardCategories, -1);
+}
+
+function updateSavingsAccountsForTransaction(
+  accounts: SavingsAccount[],
+  transaction: Transaction,
+  creditCardCategories: string[],
+  direction: 1 | -1,
+): SavingsAccount[] {
+  if (transaction.monto <= 0) return accounts;
 
   const categoryKey = normalizeLabel(transaction.categoria).toLowerCase();
-  if (!categoryKey) return accounts;
+  const cardCategoryKeys = new Set(creditCardCategories.map((category) => normalizeLabel(category).toLowerCase()).filter(Boolean));
+  const isSingleAccountCashFlow = accounts.length === 1 && !cardCategoryKeys.has(categoryKey);
+  const accountByCategory = accounts.find((account) => normalizeLabel(account.bankName).toLowerCase() === categoryKey);
 
-  let changed = false;
-  const nextAccounts = accounts.map((account) => {
-    if (normalizeLabel(account.bankName).toLowerCase() !== categoryKey) return account;
-    changed = true;
-    return { ...account, balance: account.balance - transaction.monto };
-  });
+  if (transaction.gastoIngresoAhorro === "Ingreso") {
+    const target = accountByCategory ?? (isSingleAccountCashFlow ? accounts[0] : undefined);
+    if (!target) return accounts;
+    return accounts.map((account) => account.id === target.id ? { ...account, balance: account.balance + direction * transaction.monto } : account);
+  }
 
-  return changed ? nextAccounts : accounts;
+  if (transaction.gastoIngresoAhorro === "Gasto" && isSingleAccountCashFlow) {
+    return accounts.map((account) => ({ ...account, balance: account.balance - direction * transaction.monto }));
+  }
+
+  return accounts;
 }
 
 export function applyTransactionToDebts(debts: Debt[], transaction: Transaction): Debt[] {

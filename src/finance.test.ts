@@ -336,6 +336,26 @@ describe("applyTransactionToSavingsAccounts", () => {
     expect(applyTransactionToSavingsAccounts(accounts, tx({ categoria: "Unknown", gastoIngresoAhorro: "Ingreso", monto: 25000 }))).toBe(accounts);
     expect(applyTransactionToSavingsAccounts(accounts, tx({ categoria: "Lulo Bank", gastoIngresoAhorro: "Ingreso", monto: 0 }))).toBe(accounts);
   });
+
+  it("updates the only account for ordinary income and expenses, and reverses edits or removals", () => {
+    const onlyAccount = [accounts[0]];
+    const expense = tx({ categoria: "Personal", gastoIngresoAhorro: "Gasto", monto: 25000 });
+    const income = tx({ categoria: "Salary", gastoIngresoAhorro: "Ingreso", monto: 50000 });
+
+    const afterExpense = applyTransactionToSavingsAccounts(onlyAccount, expense);
+    const afterIncome = applyTransactionToSavingsAccounts(afterExpense, income);
+
+    expect(afterIncome[0].balance).toBe(125000);
+    expect(reverseTransactionFromSavingsAccounts(afterIncome, income)).toEqual(afterExpense);
+    expect(reverseTransactionFromSavingsAccounts(afterExpense, expense)).toEqual(onlyAccount);
+  });
+
+  it("does not treat a linked credit-card category as cash movement for one account", () => {
+    const onlyAccount = [accounts[0]];
+    const charge = tx({ categoria: "TC", gastoIngresoAhorro: "Gasto", monto: 25000 });
+
+    expect(applyTransactionToSavingsAccounts(onlyAccount, charge, ["TC"])).toBe(onlyAccount);
+  });
 });
 
 describe("buildCategoryUsage", () => {
